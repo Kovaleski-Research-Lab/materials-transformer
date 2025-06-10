@@ -12,7 +12,7 @@ spec:
       labels:
         app: transformer-dev
     spec:
-    
+
       volumes:
       - name: data-storage
         persistentVolumeClaim:
@@ -36,9 +36,9 @@ spec:
           - "tail -f /dev/null"
 
         volumeMounts:
-        - name: nfe-data
+        - name: data-storage
           mountPath: /app/data
-        - name: training-results
+        - name: results-storage
           mountPath: /app/results
         - name: code-storage
           mountPath: /app/src 
