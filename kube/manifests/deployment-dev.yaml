@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transformer-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transformer-dev
+  template:
+    metadata:
+      labels:
+        app: transformer-dev
+    spec:
+    
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: nfe-data
+      - name: results-storage
+        persistentVolumeClaim:
+          claimName: training-results
+      - name: code-storage
+        persistentVolumeClaim:
+          claimName: transformer-code
+      - name: dshm
+        emptyDir:
+          medium: Memory
+
+      containers:
+      - name: transformer-dev-container
+        image: docker.io/kovaleskilab/ml-uv:latest
+        imagePullPolicy: Always
+        command: ["/bin/sh", "-c"]
+        args:
+          - "tail -f /dev/null"
+
+        volumeMounts:
+        - name: nfe-data
+          mountPath: /app/data
+        - name: training-results
+          mountPath: /app/results
+        - name: code-storage
+          mountPath: /app/src 
+        - name: dshm
+          mountPath: /dev/shm
+
+        resources:
+          limits:
+            memory: 200Gi
+            cpu: 24
+            nvidia.com/a100: 1
+          requests:
+            memory: 200Gi
+            cpu: 24
+            nvidia.com/a100: 1
