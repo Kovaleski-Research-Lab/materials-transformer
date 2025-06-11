@@ -1,0 +1,24 @@
+defaults:
+  - scheduler: cosine_annealing
+  - _self_
+
+_target_: materials_transformer.models.transformer.NewWaveTransformer
+
+# Transformer Parameters
+# - patch_size: size of patches to split input into
+# - embed_dim: dimensionity in embedding space
+# - depth: total layers (e.g., 6 encoder, 6 decoder)
+# - num_heads: attention heads
+# - mlp_ratio:
+
+patch_size: 11
+embed_dim: 384
+depth: 4
+num_heads: 8
+mlp_ratio: 4.0
+dropout: 0.0
+
+learning_rate: 1.e-3
+near_field_dim: ${data.near_field_dim}
+seq_len: ${data.seq_len}
+loss_func: 'mse'

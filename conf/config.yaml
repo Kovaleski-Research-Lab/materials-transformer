@@ -1,0 +1,12 @@
+defaults:
+  - model: transformer
+  - data: default
+  - trainer: default
+  - _self_
+
+hydra:
+  run:
+    dir: results/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+project_name: "materials-transformer"
+version: "1.0.0"
