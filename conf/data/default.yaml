@@ -3,3 +3,6 @@ _target_: materials_transformer.data_modules.fields.NFDataModule
 batch_size: 8
 near_field_dim: 166
 seq_len: 15
+data_path: '../../data/dataset_155.pt'
+spacing_mode: 'sequential'
+io_mode: 'one_to_many'
