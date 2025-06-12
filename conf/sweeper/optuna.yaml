@@ -1,17 +1,14 @@
 _target_: hydra_plugins.hydra_optuna_sweeper.optuna.OptunaSweeper
 
-# Optuna-specific settings
 direction: minimize # Tell Optuna to minimize the value returned by main()
 study_name: waveprop_optimization
 storage: null # Use in-memory storage
 n_trials: 100 # Run 100 different hyperparameter combinations
-n_jobs: 1 # Run trials sequentially (can be increased for parallel execution)
+n_jobs: 1 # Run trials sequentially (increase for parallel execution)
 
 # --- The Search Space ---
-# This is where you define which hyperparameters Optuna should search over.
-# The keys use dot notation to target any parameter in your config.
 params:
   model.lr: loguniform(1e-5, 1e-2)
   model.dropout: uniform(0.1, 0.5)
   data.batch_size: choice(32, 64, 128)
-  model.scheduler.patience: choice(5, 10, 15) # Tune your scheduler's params too!
+  model.scheduler.patience: choice(5, 10, 15)

@@ -2,14 +2,14 @@ _target_: pytorch_lightning.Trainer
 
 accelerator: auto
 devices: auto
-max_epochs: 100
+max_epochs: 5
 precision: "16-mixed"
 log_every_n_steps: 1
 
 logger:
   _target_: pytorch_lightning.loggers.MLFlowLogger
   experiment_name: ${project_name}
-  tracking_uri: ${paths.logs}/mlruns
+  tracking_uri: "file://${paths.results}/mlruns"
   log_model: true 
 
 # --- Callbacks Configuration ---
@@ -19,8 +19,9 @@ callbacks:
     monitor: "val_loss"
     mode: "min"
     save_top_k: 1
-    dirpath: "checkpoints/"
-    filename: "{epoch}-{val_loss:.2f}"
+    dirpath: "${paths.results}/checkpoints/"
+    filename: "epoch_{epoch}-val_loss_{val_loss:.2f}"
+    auto_insert_metric_name: False
 
   # 2. Early Stopping
   - _target_: pytorch_lightning.callbacks.EarlyStopping

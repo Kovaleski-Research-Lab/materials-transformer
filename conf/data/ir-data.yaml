@@ -1,1 +1,1 @@
-_target_: materials_transformer.data_modules.materials.IRDataModule
+_target_: data_modules.materials.IRDataModule

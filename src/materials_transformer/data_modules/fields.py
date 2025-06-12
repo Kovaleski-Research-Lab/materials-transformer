@@ -23,6 +23,7 @@ class NFDataModule(LightningDataModule):
     def __init__(
         self,
         batch_size: int,
+        n_cpus: int,
         near_field_dim: int,
         seq_len: int,
         data_path: str,
@@ -30,6 +31,7 @@ class NFDataModule(LightningDataModule):
         io_mode: str
     ):
         self.batch_size = batch_size
+        self.n_cpus = n_cpus
         self.near_field_dim = near_field_dim
         self.seq_len = seq_len
         self.data_path = data_path

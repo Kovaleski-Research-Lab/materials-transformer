@@ -4,9 +4,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts
 import numpy as np
 import hydra
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import _LRScheduler
+from typing import Any
 
 # helper function(s)
 def get_padding_2d(input_shape, patch_size):
@@ -26,10 +28,12 @@ class NewWaveTransformer(pl.LightningModule):
         depth: int,
         num_heads: int,
         mlp_ratio: float,
+        use_diff_loss: bool,
+        lambda_diff: float,
         dropout: float,
         # relevant hyperparameters 
-        learning_rate: float,
-        scheduler_cfg: DictConfig,
+        optimizer: Any,
+        lr_scheduler: Any,
         near_field_dim: int,
         loss_func: str,
         seq_len: int
@@ -39,9 +43,11 @@ class NewWaveTransformer(pl.LightningModule):
         self.depth = depth
         self.num_heads = num_heads
         self.mlp_ratio = mlp_ratio
+        self.use_diff_loss = use_diff_loss
+        self.lambda_diff = lambda_diff
         self.dropout = dropout
-        self.learning_rate = learning_rate
-        self.scheduler_cfg = scheduler_cfg
+        self.optimizer_cfg = optimizer
+        self.scheduler_cfg = lr_scheduler
         self.near_field_dim = near_field_dim
         self.loss_func = loss_func
         self.seq_len = seq_len
@@ -51,6 +57,19 @@ class NewWaveTransformer(pl.LightningModule):
         
         super().__init__()
         self.save_hyperparameters()
+        
+                # store necessary lists for tracking metrics per fold
+        self.test_results = {'train': {'nf_pred': [], 'nf_truth': []},
+                             'valid': {'nf_pred': [], 'nf_truth': []}}
+        
+        # initialize metrics
+        self.train_psnr = PeakSignalNoiseRatio(data_range=1.0)
+        self.train_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
+        self.val_psnr = PeakSignalNoiseRatio(data_range=1.0)
+        self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
+        
+        # setup architecture
+        self.create_architecture()
         
     # ------------------------
     # HELPER FUNCTIONS / LOGIC
@@ -66,7 +85,7 @@ class NewWaveTransformer(pl.LightningModule):
         
     def create_architecture(self):
         C = 2 # Input channels (real, imag)
-        H, W = self.input_height, self.input_width
+        H, W = self.near_field_dim, self.near_field_dim
         padding_dims = get_padding_2d((H, W), self.patch_size)
         self.padded_H = H + padding_dims[2] + padding_dims[3]
         self.padded_W = W + padding_dims[0] + padding_dims[1]
@@ -171,7 +190,7 @@ class NewWaveTransformer(pl.LightningModule):
         B, D = embedding.shape
         N = self.num_patches
         C = 2 # Assuming C=2
-        H, W = self.input_height, self.input_width
+        H, W = self.near_field_dim, self.near_field_dim
         P = self.patch_size
         grid_H, grid_W = self.grid_size
 
@@ -342,8 +361,8 @@ class NewWaveTransformer(pl.LightningModule):
         objective loss calculation for the transformer. Differs from other implementations in the
         inclusion of an optional difference loss term for temporal dynamics.
         """
-        use_diff_loss = self.arch_conf.use_diff_loss
-        lambda_diff = self.arch_conf.lambda_diff
+        use_diff_loss = self.use_diff_loss
+        lambda_diff = self.lambda_diff
 
         # --- 1. Calculate the base loss ---
         base_loss = self.compute_loss(preds, labels, choice=self.loss_func)
@@ -384,10 +403,12 @@ class NewWaveTransformer(pl.LightningModule):
         """
         Setup optimzier and LR scheduler.
         """
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        scheduler = hydra.utils.instantiate(self.scheduler_cfg, optimizer=optimizer)
+        #optimizer = hydra.utils.instantiate(self.optimizer_cfg, params=self.parameters())
+        #lr_scheduler = hydra.utils.instantiate(self.scheduler_cfg, optimizer=optimizer)
+        optimizer = self.optimizer_cfg(params=self.parameters())
+        lr_scheduler = self.scheduler_cfg(optimizer=optimizer)
         
-        lr_scheduler_config = {"scheduler": scheduler,
+        lr_scheduler_config = {"scheduler": lr_scheduler,
                                "interval": "epoch", "frequency": 1,
                                "monitor": "val_loss"}
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler_config}

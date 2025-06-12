@@ -1,8 +1,4 @@
-defaults:
-  - scheduler: cosine_annealing
-  - _self_
-
-_target_: materials_transformer.models.transformer.NewWaveTransformer
+_target_: models.transformer.NewWaveTransformer
 
 # Transformer Parameters
 # - patch_size: size of patches to split input into
@@ -10,15 +6,33 @@ _target_: materials_transformer.models.transformer.NewWaveTransformer
 # - depth: total layers (e.g., 6 encoder, 6 decoder)
 # - num_heads: attention heads
 # - mlp_ratio:
+# - use_diff_loss: whether to use the difference loss term (unfinished)
+# - lambda_diff: diff loss hyperparameter
 
 patch_size: 11
 embed_dim: 384
 depth: 4
 num_heads: 8
 mlp_ratio: 4.0
+use_diff_loss: False
+lambda_diff: 0.1
 dropout: 0.0
 
-learning_rate: 1.e-3
+# General Parameters
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: True
+  lr: 1.e-3
+  betas: [0.9, 0.999] # default
+  weight_decay: 0.0 # default
+
+lr_scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _partial_: True
+  T_max: 100
+  eta_min: 1.e-6
+
 near_field_dim: ${data.near_field_dim}
 seq_len: ${data.seq_len}
 loss_func: 'mse'

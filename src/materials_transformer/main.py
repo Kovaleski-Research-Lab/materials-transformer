@@ -1,26 +1,21 @@
+import pyrootutils
+
+root = pyrootutils.setup_root(
+    search_from=__file__, 
+    indicator=".project-root", 
+    pythonpath=True,
+    dotenv=True)
+
 import hydra
-from omegaconf import DictConfig, OmegaConf
-import mlflow
-import pytorch_lightning as pl
 from hydra.utils import instantiate
-#import pyrootutils
+from omegaconf import DictConfig, OmegaConf
 
-#root = pyrootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
-
-@hydra.main(version_base=None, config_path="../../conf", config_name="config.yaml")
+@hydra.main(version_base=None, config_path=str(root / "conf"), config_name="config")
 def main(cfg: DictConfig) -> float:
+    
     print("--- Configuration ---")
     print(OmegaConf.to_yaml(cfg))
     print("---------------------")
-    
-    '''# -- MLflow --
-    mlflow.set_tracking_uri(f"file://{hydra.utils.get_original_cwd()}/mlruns")
-    mlflow.set_experiment(cfg.project_name)
-    
-    with mlflow.start_run() as run:
-        # logging hydra params
-        mlflow.log_params(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
-        print(f"MLflow Run ID: {run.info.run_id}")'''
     
     # 1. Instantiate associated objects
     model =instantiate(cfg.model)
@@ -38,12 +33,7 @@ def main(cfg: DictConfig) -> float:
         print(f"Warning: Objective metric '{objective_metric_name}' not found. Returning infinity.")
         return float("inf")
 
-    # <-- CRUCIAL FOR OPTUNA: Return the final objective value.
-    # Hydra's Optuna Sweeper plugin captures this return value and reports it to the Optuna study.
-    return float(objective_value)
-    
-    # where do files get logged?
-    # ${paths.X}, need to set that up
+    return float(objective_value) # necessary for optuna
 
 if __name__ == "__main__":
     main()
