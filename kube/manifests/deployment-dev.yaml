@@ -37,11 +37,11 @@ spec:
 
         volumeMounts:
         - name: data-storage
-          mountPath: /app/data
+          mountPath: /app/materials-transformer/data
         - name: results-storage
-          mountPath: /app/results
+          mountPath: /app/materials-transformer/results
         - name: code-storage
-          mountPath: /app/src 
+          mountPath: /app/materials-transformer/src 
         - name: dshm
           mountPath: /dev/shm
 

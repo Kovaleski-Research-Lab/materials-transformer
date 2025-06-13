@@ -17,5 +17,5 @@ paths:
   # absolute path for project root
   project_root: ${hydra:runtime.cwd}
   # root output directory for all runs
-  results: "${paths.project_root}/results"
+  results: "${paths.project_root}/results/transformer"
   nf_data: "${paths.project_root}/data/dataset_155.pt"
