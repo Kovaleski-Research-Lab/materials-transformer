@@ -9,8 +9,9 @@ hydra:
     dir: ${paths.results}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 # --- Global Project Configuration ---
-project_name: "materials-transformer"
+project_name: "fields-transformer"
 version: "1.0.0"
+matmul_precision: "medium"
 
 # --- Single Source of Truth: paths ---
 paths:

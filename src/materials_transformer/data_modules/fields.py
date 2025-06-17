@@ -56,6 +56,9 @@ class NFDataModule(LightningDataModule):
         # init train val
         self.train = Subset(self.dataset, self.index_map['train'])
         self.valid = Subset(self.dataset, self.index_map['valid'])
+        # test is valid (for now, will add functionality for tweaking this later)
+        self.test = Subset(self.dataset, self.index_map['valid'])
+        
         
     def _create_index_map(self, data):
         index_map = {'train': [], 'valid': []}

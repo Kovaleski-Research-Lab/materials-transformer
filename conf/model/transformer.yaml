@@ -23,7 +23,7 @@ dropout: 0.0
 optimizer:
   _target_: torch.optim.Adam
   _partial_: True
-  lr: 1.e-3
+  lr: 1.e-4
   betas: [0.9, 0.999] # default
   weight_decay: 0.0 # default
 
