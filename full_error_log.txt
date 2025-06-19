@@ -1,0 +1,161 @@
+--- Configuration ---
+model:
+  _target_: models.transformer.NewWaveTransformer
+  patch_size: 11
+  embed_dim: 384
+  depth: 4
+  num_heads: 8
+  mlp_ratio: 4.0
+  use_diff_loss: false
+  lambda_diff: 0.1
+  dropout: 0.0
+  optimizer:
+    _target_: torch.optim.Adam
+    _partial_: true
+    lr: 0.0001
+    betas:
+    - 0.9
+    - 0.999
+    weight_decay: 0.0
+  lr_scheduler:
+    _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+    _partial_: true
+    T_max: 100
+    eta_min: 1.0e-06
+  near_field_dim: ${data.near_field_dim}
+  seq_len: ${data.seq_len}
+  loss_func: mse
+data:
+  _target_: data_modules.fields.NFDataModule
+  batch_size: 8
+  n_cpus: 5
+  near_field_dim: 166
+  seq_len: 15
+  data_path: ${paths.nf_data}
+  spacing_mode: sequential
+  io_mode: one_to_many
+trainer:
+  _target_: pytorch_lightning.Trainer
+  accelerator: auto
+  devices: auto
+  max_epochs: 1
+  precision: 16-mixed
+  log_every_n_steps: 1
+  logger:
+    _target_: pytorch_lightning.loggers.MLFlowLogger
+    experiment_name: ${project_name}
+    tracking_uri: file://${paths.results}/mlruns
+    artifact_location: artifacts
+    log_model: false
+  callbacks:
+  - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: val_loss
+    mode: min
+    save_top_k: 1
+    filename: epoch_{epoch}-val_loss_{val_loss:.2f}
+    auto_insert_metric_name: false
+  - _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: val_loss
+    mode: min
+    patience: 15
+  - _target_: pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: step
+project_name: fields-transformer
+version: 1.0.0
+matmul_precision: medium
+paths:
+  project_root: ${hydra:runtime.cwd}
+  results: ${paths.project_root}/results/transformer
+  nf_data: ${paths.project_root}/data/dataset_155.pt
+
+---------------------
+[2025-06-19 12:39:15,676][pytorch_lightning.utilities.rank_zero][INFO] - Using 16bit Automatic Mixed Precision (AMP)
+[2025-06-19 12:39:15,679][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
+[2025-06-19 12:39:15,679][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
+[2025-06-19 12:39:15,679][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
+2025/06/19 12:39:15 WARNING mlflow.utils.autologging_utils: MLflow pytorch autologging is known to be compatible with 2.1.0 <= torch <= 2.7.1, but the installed version is 2.7.1+cu128. If you encounter errors during autologging, try upgrading / downgrading torch to a compatible version, or try upgrading MLflow.
+2025/06/19 12:39:15 INFO mlflow.utils.autologging_utils: Created MLflow autologging run with ID 'e3acda9049a442fab0a872af9572d348', which will track hyperparameters, performance metrics, model artifacts, and lineage information for the current pytorch workflow
+[2025-06-19 12:39:16,065][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+[2025-06-19 12:39:16,180][pytorch_lightning.callbacks.model_summary][INFO] - 
+  | Name                | Type                             | Params | Mode 
+---------------------------------------------------------------------------------
+0 | train_psnr          | PeakSignalNoiseRatio             | 0      | train
+1 | train_ssim          | StructuralSimilarityIndexMeasure | 0      | train
+2 | val_psnr            | PeakSignalNoiseRatio             | 0      | train
+3 | val_ssim            | StructuralSimilarityIndexMeasure | 0      | train
+4 | patch_embed         | Conv2d                           | 93.3 K | train
+5 | transformer_block   | TransformerEncoder               | 7.1 M  | train
+6 | norm                | LayerNorm                        | 768    | train
+7 | prediction_head_mlp | Sequential                       | 37.8 M | train
+8 | patch_projection    | Linear                           | 93.2 K | train
+  | other params        | n/a                              | 104 K  | n/a  
+---------------------------------------------------------------------------------
+45.2 M    Trainable params
+0         Non-trainable params
+45.2 M    Total params
+180.946   Total estimated model params size (MB)
+52        Modules in train mode
+0         Modules in eval mode
+Sanity Checking: |          | 0/? [00:00<?, ?it/s]Sanity Checking:   0%|          | 0/2 [00:00<?, ?it/s]Sanity Checking DataLoader 0:   0%|          | 0/2 [00:00<?, ?it/s]Sanity Checking DataLoader 0:  50%|█████     | 1/2 [00:00<00:00,  1.32it/s]Sanity Checking DataLoader 0: 100%|██████████| 2/2 [00:01<00:00,  1.58it/s]                                                                           Training: |          | 0/? [00:00<?, ?it/s]Training:   0%|          | 0/10 [00:00<?, ?it/s]Epoch 0:   0%|          | 0/10 [00:00<?, ?it/s] Epoch 0:  10%|█         | 1/10 [00:00<00:02,  3.39it/s]Epoch 0:  10%|█         | 1/10 [00:00<00:02,  3.39it/s, v_num=c468]Epoch 0:  20%|██        | 2/10 [00:00<00:02,  3.85it/s, v_num=c468]Epoch 0:  20%|██        | 2/10 [00:00<00:02,  3.85it/s, v_num=c468]Epoch 0:  30%|███       | 3/10 [00:00<00:01,  4.02it/s, v_num=c468]Epoch 0:  30%|███       | 3/10 [00:00<00:01,  4.02it/s, v_num=c468]Epoch 0:  40%|████      | 4/10 [00:00<00:01,  4.09it/s, v_num=c468]Epoch 0:  40%|████      | 4/10 [00:00<00:01,  4.09it/s, v_num=c468]Epoch 0:  50%|█████     | 5/10 [00:01<00:01,  4.16it/s, v_num=c468]Epoch 0:  50%|█████     | 5/10 [00:01<00:01,  4.16it/s, v_num=c468]Epoch 0:  60%|██████    | 6/10 [00:01<00:00,  4.22it/s, v_num=c468]Epoch 0:  60%|██████    | 6/10 [00:01<00:00,  4.21it/s, v_num=c468]Epoch 0:  70%|███████   | 7/10 [00:01<00:00,  4.25it/s, v_num=c468]Epoch 0:  70%|███████   | 7/10 [00:01<00:00,  4.25it/s, v_num=c468]Epoch 0:  80%|████████  | 8/10 [00:01<00:00,  4.28it/s, v_num=c468]Epoch 0:  80%|████████  | 8/10 [00:01<00:00,  4.28it/s, v_num=c468]Epoch 0:  90%|█████████ | 9/10 [00:02<00:00,  4.30it/s, v_num=c468]Epoch 0:  90%|█████████ | 9/10 [00:02<00:00,  4.30it/s, v_num=c468]Epoch 0: 100%|██████████| 10/10 [00:02<00:00,  4.32it/s, v_num=c468]Epoch 0: 100%|██████████| 10/10 [00:02<00:00,  4.32it/s, v_num=c468]
+Validation: |          | 0/? [00:00<?, ?it/s][A
+Validation:   0%|          | 0/3 [00:00<?, ?it/s][A
+Validation DataLoader 0:   0%|          | 0/3 [00:00<?, ?it/s][A
+Validation DataLoader 0:  33%|███▎      | 1/3 [00:00<00:00,  2.02it/s][A
+Validation DataLoader 0:  67%|██████▋   | 2/3 [00:00<00:00,  2.01it/s][A
+Validation DataLoader 0: 100%|██████████| 3/3 [00:01<00:00,  2.24it/s][A
+                                                                      [AEpoch 0: 100%|██████████| 10/10 [00:03<00:00,  2.71it/s, v_num=c468, val_loss=0.0371, val_psnr=14.40, val_ssim=0.0358]Epoch 0: 100%|██████████| 10/10 [00:03<00:00,  2.71it/s, v_num=c468, val_loss=0.0371, val_psnr=14.40, val_ssim=0.0358, train_loss=0.0425, train_psnr=13.80, train_ssim=0.0177][2025-06-19 12:39:22,470][pytorch_lightning.utilities.rank_zero][INFO] - `Trainer.fit` stopped: `max_epochs=1` reached.
+Epoch 0: 100%|██████████| 10/10 [00:04<00:00,  2.06it/s, v_num=c468, val_loss=0.0371, val_psnr=14.40, val_ssim=0.0358, train_loss=0.0425, train_psnr=13.80, train_ssim=0.0177]
+the just grabbed input_sample's shape is: torch.Size([8, 1, 2, 166, 166])
+Formatting evalulation data:   0%|          | 0/3 [00:00<?, ?it/s]Formatting evalulation data:   0%|          | 0/3 [00:00<?, ?it/s]
+2025/06/19 12:39:24 WARNING mlflow.utils.requirements_utils: Found torch version (2.7.1+cu128) contains a local version label (+cu128). MLflow logged a pip requirement for this package as 'torch==2.7.1' without the local version label to make it installable from PyPI. To specify pip requirements containing local version labels, please use `conda_env` or `pip_requirements`.
+2025/06/19 12:39:27 WARNING mlflow.utils.requirements_utils: Found torchvision version (0.22.1+cu128) contains a local version label (+cu128). MLflow logged a pip requirement for this package as 'torchvision==0.22.1' without the local version label to make it installable from PyPI. To specify pip requirements containing local version labels, please use `conda_env` or `pip_requirements`.
+2025/06/19 12:39:27 WARNING mlflow.utils.environment: Failed to resolve installed pip version. ``pip`` will be added to conda.yaml environment spec without a version specifier.
+2025/06/19 12:39:27 INFO mlflow.tracking.fluent: Active model is set to the logged model with ID: m-943396cadd9048a5a3003c132ef5f0b3
+2025/06/19 12:39:27 INFO mlflow.tracking.fluent: Use `mlflow.set_active_model` to set the active model to a different one if needed.
+2025/06/19 12:39:36 WARNING mlflow.utils.autologging_utils: MLflow pytorch autologging is known to be compatible with 2.1.0 <= torch <= 2.7.1, but the installed version is 2.7.1+cu128. If you encounter errors during autologging, try upgrading / downgrading torch to a compatible version, or try upgrading MLflow.
+eval_data_list[0] has a shape of (8, 55112)
+eval_data shape is: (8, 55112)
+Running mlflow.evaluate on model: runs:/4f693d8221e8474784f86c75e76ec468/model
+Error executing job with overrides: []
+Traceback (most recent call last):
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/src/materials_transformer/main.py", line 126, in main
+    results = mlflow.evaluate(
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/models/evaluation/deprecated.py", line 23, in evaluate
+    return model_evaluate(*args, **kwargs)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/models/evaluation/base.py", line 1790, in evaluate
+    evaluate_result = _evaluate(
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/models/evaluation/base.py", line 1031, in _evaluate
+    eval_result = eval_.evaluator.evaluate(
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/models/evaluation/default_evaluator.py", line 947, in evaluate
+    return self._evaluate(model, extra_metrics, custom_artifacts)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/models/evaluation/evaluators/regressor.py", line 38, in _evaluate
+    self.y_pred = self._generate_model_predictions(model, input_df)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/models/evaluation/evaluators/regressor.py", line 55, in _generate_model_predictions
+    preds = predict_fn(input_df)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/pyfunc/__init__.py", line 840, in predict
+    return self._predict(data, params)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/pyfunc/__init__.py", line 890, in _predict
+    return self._predict_fn(data, params=params)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/mlflow/pytorch/__init__.py", line 744, in predict
+    preds = self.pytorch_model(input_tensor, **(params or {}))
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/src/materials_transformer/models/transformer.py", line 309, in forward
+    transformer_out = self.transformer_block(src=current_seq_embeddings, mask=attn_mask) # (B, current_seq_len_tokens, D)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/transformer.py", line 514, in forward
+    output = mod(
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hexa/ejmcmk/develop/code/materials-transformer/.venv/lib/python3.10/site-packages/torch/nn/modules/transformer.py", line 881, in forward
+    return torch._transformer_encoder_layer_fwd(
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.56 GiB. GPU 0 has a total capacity of 7.64 GiB of which 535.69 MiB is free. Including non-PyTorch memory, this process has 6.08 GiB memory in use. Of the allocated memory 5.66 GiB is allocated by PyTorch, and 248.61 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

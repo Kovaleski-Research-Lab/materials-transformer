@@ -237,8 +237,9 @@ class NewWaveTransformer(pl.LightningModule):
             labels (torch.Tensor, optional): Ground truth labels (B, T_out, C, H, W).
                                             Used for teacher forcing during training.
         Returns:
-            Tuple[torch.Tensor, None]: Predicted sequence (B, T_out, C, H, W), None
+            torch.Tensor: Predicted sequence (B, T_out, C, H, W)
         """
+        #print(f"x.shape: {x.shape}")
         B, T_in, C, H, W = x.shape
         T_out = self.seq_len
         N = self.num_patches
@@ -287,7 +288,7 @@ class NewWaveTransformer(pl.LightningModule):
             preds = self._predict_frame_from_embedding(output_embeddings.reshape(-1, D))
             preds = preds.view(B, T_out, C, H, W) # Reshape back. `preds` *should* require grad.
 
-            return preds, None
+            return preds
 
         else:
             # --- Autoregressive Generation during Inference ---
@@ -326,7 +327,7 @@ class NewWaveTransformer(pl.LightningModule):
 
             # Stack generated frames
             preds = torch.stack(generated_frames, dim=1) # (B, T_out, C, H, W)
-            return preds, None
+            return preds
         
     def compute_loss(self, preds, labels, choice='mse'):
         """
@@ -418,7 +419,7 @@ class NewWaveTransformer(pl.LightningModule):
         Shared logic for training/validation steps using the Transformer.
         """
         samples, labels = batch # samples shape (B, T_in, C, H, W), labels shape (B, T_out, C, H, W)
-        preds, _ = self.forward(samples, labels) # preds shape (B, T_out, C, H, W)
+        preds = self.forward(samples, labels) # preds shape (B, T_out, C, H, W)
         loss_dict = self.objective(preds, labels)
         loss = loss_dict['loss']
 

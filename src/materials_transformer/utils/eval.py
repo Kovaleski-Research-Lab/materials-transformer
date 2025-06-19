@@ -4,11 +4,14 @@ import numpy as np
 import pandas as pd
 import os
 from omegaconf import DictConfig
+import mlflow
+from tqdm import tqdm
+
 import utils.mapping as mapping
 
 def create_dft_plot_artifact(
     eval_df: pd.DataFrame,
-    builtin_metrics: dict,
+    #builtin_metrics: dict,
     artifacts_dir: str,
     cfg:  DictConfig,
     sample_idx: int = 0
@@ -19,7 +22,7 @@ def create_dft_plot_artifact(
     print(f"Generating custom DFT plot for sample index {sample_idx}...")
     
     # extract the relevant data
-    preds = np.array(eval_df['prediction'][sample_idx])
+    preds = np.array(eval_df['predictions'][sample_idx])
     truths = np.array(eval_df['targets'][sample_idx])
     
     # clarify configurations
@@ -110,3 +113,37 @@ def create_dft_plot_artifact(
     print(f"Saved plot artifact to {plot_path}")
     
     return {}
+
+# ---------------------------
+# Custom MLflow Evaluator
+# ---------------------------
+
+class CustomVisionEvaluator(mlflow.models.evaluation.ModelEvaluator):
+    def can_evaluate(self, model_type, **kwargs):
+        # This evaluator can handle any model type since we define the logic.
+        return True
+
+    def evaluate(self, model, data, targets, custom_metrics, artifacts_dir, **kwargs):
+        # Create a PyTorch DataLoader to handle batching automatically
+        dataset = torch.utils.data.TensorDataset(torch.from_numpy(data).float())
+        loader = torch.utils.data.DataLoader(dataset, batch_size=kwargs.get("batch_size", 8))
+        
+        device = next(model.parameters()).device
+        
+        all_preds = []
+        with torch.no_grad():
+            for (batch_data,) in tqdm(loader, desc="Custom Evaluator Prediction"):
+                preds = model(batch_data.to(device))
+                all_preds.append(preds.cpu().numpy())
+        
+        predictions = np.concatenate(all_preds, axis=0)
+
+        # The 'data' is our input, 'targets' is ground truth. Create the eval_df.
+        # This is what our custom plotting function expects.
+        eval_df = pd.DataFrame({"prediction": [p for p in predictions]})
+        
+        # Call all the custom metric/artifact functions provided
+        for metric_fn in custom_metrics:
+            metric_fn(eval_df=eval_df, targets=targets, artifacts_dir=artifacts_dir)
+            
+        return {"metrics": {}}
