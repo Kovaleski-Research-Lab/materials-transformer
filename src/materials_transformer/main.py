@@ -27,7 +27,7 @@ import tempfile
 # Import: Custom libs
 # ---------------------
 
-from utils.eval import create_dft_plot_artifact, CustomVisionEvaluator
+from utils.eval import create_dft_plot_artifact
 
 @hydra.main(version_base=None, config_path=str(root / "conf"), config_name="config")
 def main(cfg: DictConfig) -> float:
