@@ -14,6 +14,7 @@ import pickle
 import torch
 from tqdm import tqdm
 from typing import Dict
+import pandas as pd
 
 # ----------------------
 # DATAMODULE and DATASET
@@ -21,9 +22,18 @@ from typing import Dict
 
 class IRDataModule(LightningDataModule):
     def __init__(
-        self
+        self,
+        batch_size: int,
+        n_cpus: int,
+        data_path: str
     ):
-        pass
+        self.batch_size = batch_size
+        self.n_cpus = n_cpus
+        self.data_path = data_path
+    
+    def setup(self, stage):
+        # read in the parquet file
+        raw_data = pd.read_parquet(self.data_path)
     
 class IR_Dataset(Dataset):
     """

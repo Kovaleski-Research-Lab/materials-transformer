@@ -1,6 +1,6 @@
 defaults:
   - model: transformer
-  - data: default
+  - data: fields
   - trainer: default
   - _self_
 
