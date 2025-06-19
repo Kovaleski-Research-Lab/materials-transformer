@@ -67,10 +67,6 @@ def main(cfg: DictConfig) -> float:
     output_schema = Schema([TensorSpec(np.dtype(np.float32), output_shape)])
     signature = ModelSignature(inputs=input_schema, outputs=output_schema)
     
-    #input_sample = input_sample.to(device)
-    #print(f"input_sample shape: {input_sample.shape}")
-    #signature = mlflow.models.infer_signature(input_sample, best_model(input_sample))
-    
     # setup things for testing
     datamodule.setup("test")
     test_dataloader = datamodule.test_dataloader()
@@ -122,67 +118,55 @@ def main(cfg: DictConfig) -> float:
 if __name__ == "__main__":
     main()
     
-    # old method with model signature
-    
-    '''# create partial functions for custom artifacts in MLflow
-    plot_fn_partial = partial(create_dft_plot_artifact, cfg=cfg, sample_idx=0)
-    dft_plot_fn = mlflow.models.make_metric(
-        eval_fn=plot_fn_partial,
-        greater_is_better=False,
-        name="dft_plot_generator",
-        long_name="DFT Field Plot Artifact Generator"
-    )
-    
-    # 4. format data and results for evaluation
-    eval_data_list = []
-    eval_labels_list = []
-    for batch in tqdm(test_dataloader, desc="Formatting evalulation data"):
-        samples, labels = batch
-        samples = samples.cpu().numpy()
-        labels = labels.cpu().numpy()
-        
-        # reshape the data to OG for mlflow
-        # OG shape -> [batch, flattened(seq_len, channels, H, W)]
-        num_samples = samples.shape[0]
-        eval_data_list.append(samples.reshape(num_samples, -1))
-        eval_labels_list.append(labels.reshape(num_samples, -1))
-        break
-        
-    # Concatenate all batches into single numpy arrays and make the df
-    eval_data = np.concatenate(eval_data_list, axis=0)
-    eval_labels = np.concatenate(eval_labels_list, axis=0)
-    
-    eval_df = pd.DataFrame({
-        "x": [row for row in eval_data]
-    })
-    
-    # 3. Add the 'targets' column as before.
-    eval_df["targets"] = [row for row in eval_labels]
-    
-    mlflow.set_tracking_uri(trainer.logger.experiment.tracking_uri) 
-    model_info = mlflow.pytorch.log_model(
-        pytorch_model=best_model,
-        name="model",
-        signature=signature
-    )
-    print(f"Running mlflow.evaluate on model: {model_uri}")
-    vision_evaluator = CustomVisionEvaluator()
-    results = vision_evaluator.evaluate(
-        model=model_info.model_uri,
-        data=eval_df,
-        targets= "targets",
-        custom_metrics=[dft_plot_fn]
-    )
-        
-    print("--- mlflow.evaluate() Results ---")
-    print(pd.DataFrame(results.metrics, index=["value"]).T)
-    
-    # --- original objective return for Optuna ---
-    objective_metric_name = cfg.get("objective_metric", "val_loss")
-    objective_value = trainer.callback_metrics.get(objective_metric_name)
-    
-    if objective_value is None:
-        print(f"Warning: Objective metric '{objective_metric_name}' not found. Returning infinity.")
-        return float("inf")
+# ARCHIVAL
+# old method with model signature
 
-    return float(objective_value)'''
+'''# create partial functions for custom artifacts in MLflow
+plot_fn_partial = partial(create_dft_plot_artifact, cfg=cfg, sample_idx=0)
+dft_plot_fn = mlflow.models.make_metric(
+    eval_fn=plot_fn_partial,
+    greater_is_better=False,
+    name="dft_plot_generator",
+    long_name="DFT Field Plot Artifact Generator"
+)
+
+# 4. format data and results for evaluation
+eval_data_list = []
+eval_labels_list = []
+for batch in tqdm(test_dataloader, desc="Formatting evalulation data"):
+    samples, labels = batch
+    samples = samples.cpu().numpy()
+    labels = labels.cpu().numpy()
+    
+    # reshape the data to OG for mlflow
+    # OG shape -> [batch, flattened(seq_len, channels, H, W)]
+    num_samples = samples.shape[0]
+    eval_data_list.append(samples.reshape(num_samples, -1))
+    eval_labels_list.append(labels.reshape(num_samples, -1))
+    break
+    
+# Concatenate all batches into single numpy arrays and make the df
+eval_data = np.concatenate(eval_data_list, axis=0)
+eval_labels = np.concatenate(eval_labels_list, axis=0)
+
+eval_df = pd.DataFrame({
+    "x": [row for row in eval_data]
+})
+
+# 3. Add the 'targets' column as before.
+eval_df["targets"] = [row for row in eval_labels]
+
+mlflow.set_tracking_uri(trainer.logger.experiment.tracking_uri) 
+model_info = mlflow.pytorch.log_model(
+    pytorch_model=best_model,
+    name="model",
+    signature=signature
+)
+print(f"Running mlflow.evaluate on model: {model_uri}")
+vision_evaluator = CustomVisionEvaluator()
+results = vision_evaluator.evaluate(
+    model=model_info.model_uri,
+    data=eval_df,
+    targets= "targets",
+    custom_metrics=[dft_plot_fn]
+)'''
