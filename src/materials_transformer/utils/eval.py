@@ -13,7 +13,6 @@ def create_dft_plot_artifact(
     eval_df: pd.DataFrame,
     #builtin_metrics: dict,
     artifacts_dir: str,
-    cfg:  DictConfig,
     sample_idx: int = 0
 ) -> dict:
     """
@@ -21,27 +20,33 @@ def create_dft_plot_artifact(
     """
     print(f"Generating custom DFT plot for sample index {sample_idx}...")
     
-    # extract the relevant data
-    preds = np.array(eval_df['predictions'][sample_idx])
-    truths = np.array(eval_df['targets'][sample_idx])
+    # extract the data for the specified sample
+    preds = eval_df['predictions'][sample_idx]
+    truths = eval_df['target'][sample_idx]
     
     # clarify configurations
-    H = cfg.data.near_field_dim
-    W = cfg.data.near_field_dim
-    C = 2 # real and imag
-    T = cfg.data.seq_len
+   # H = cfg.data.near_field_dim
+    #W = cfg.data.near_field_dim
+    #C = 2 # real and imag
+    #T = cfg.data.seq_len
+    T = preds.shape[0]
     
     # use configs to reshape back to [T, C, H, W]
-    preds_reshaped = torch.from_numpy(preds).reshape(T, C, H, W)
-    truths_reshaped = torch.from_numpy(truths).reshape(T, C, H, W)
+    #preds_reshaped = torch.from_numpy(preds).reshape(T, C, H, W)
+    #truths_reshaped = torch.from_numpy(truths).reshape(T, C, H, W)
+    # convert to torch tensors and ensure float32
+    preds_tensor = torch.from_numpy(preds).float()
+    target_tensor = torch.from_numpy(truths).float() 
     
     # separate real and imaginary components
-    pred_real, pred_imag = preds_reshaped[:, 0, :, :], preds_reshaped[:, 1, :, :]
-    truth_real, truth_imag = truths_reshaped[:, 0, :, :], truths_reshaped[:, 1, :, :]
+    #pred_real, pred_imag = preds_reshaped[:, 0, :, :], preds_reshaped[:, 1, :, :]
+    #truth_real, truth_imag = truths_reshaped[:, 0, :, :], truths_reshaped[:, 1, :, :]
+    preds_real, preds_imag = preds_tensor[:, 0, :, :], preds_tensor[:, 1, :, :]
+    target_real, target_imag = target_tensor[:, 0, :, :], target_tensor[:, 1, :, :]
 
     # convert to polar coords
-    truth_mag, truth_phase = mapping.cartesian_to_polar(truth_real, truth_imag)
-    pred_mag, pred_phase = mapping.cartesian_to_polar(pred_real, pred_imag)
+    truth_mag, truth_phase = mapping.cartesian_to_polar(target_real, target_imag)
+    pred_mag, pred_phase = mapping.cartesian_to_polar(preds_real, preds_imag)
     
     # Create figure WITHOUT creating subplots
     fig = plt.figure(figsize=(4*T + 2, 16))

@@ -34,6 +34,7 @@ class IRDataModule(LightningDataModule):
     def setup(self, stage):
         # read in the parquet file
         raw_data = pd.read_parquet(self.data_path)
+        
     
 class IR_Dataset(Dataset):
     """

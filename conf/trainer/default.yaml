@@ -10,7 +10,6 @@ logger:
   _target_: pytorch_lightning.loggers.MLFlowLogger
   experiment_name: ${project_name}
   tracking_uri: "file://${paths.results}/mlruns"
-  artifact_location: "artifacts"
   log_model: false # ModelCheckpoint callback handles this
 
 # --- Callbacks Configuration ---

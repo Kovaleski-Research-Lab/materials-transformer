@@ -1,14 +1,14 @@
 import pytorch_lightning as pl
-from omegaconf import DictConfig
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 import numpy as np
-import hydra
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import _LRScheduler
 from typing import Any
+import tempfile
+import shutil
+
+from utils.eval import create_dft_plot_artifact
 
 # helper function(s)
 def get_padding_2d(input_shape, patch_size):
@@ -67,6 +67,7 @@ class NewWaveTransformer(pl.LightningModule):
         self.train_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
         self.val_psnr = PeakSignalNoiseRatio(data_range=1.0)
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
+        self.test_step_outputs = []
         
         # setup architecture
         self.create_architecture()
@@ -332,7 +333,6 @@ class NewWaveTransformer(pl.LightningModule):
     def compute_loss(self, preds, labels, choice='mse'):
         """
         Compute loss given predictions and labels.
-        Subclasses can override if needed, but this base implementation is standard.
         """
         if preds.ndim == 3: # vanilla LSTM, for example, flattens spatial and r/i dims
             preds = preds.view(preds.shape[0], preds.shape[1], 2, self.near_field_dim, self.near_field_dim)
@@ -416,7 +416,7 @@ class NewWaveTransformer(pl.LightningModule):
 
     def shared_step(self, batch, batch_idx):
         """
-        Shared logic for training/validation steps using the Transformer.
+        logic for training/validation/testing steps using the Transformer.
         """
         samples, labels = batch # samples shape (B, T_in, C, H, W), labels shape (B, T_out, C, H, W)
         preds = self.forward(samples, labels) # preds shape (B, T_out, C, H, W)
@@ -424,27 +424,10 @@ class NewWaveTransformer(pl.LightningModule):
         loss = loss_dict['loss']
 
         return loss, preds
-
-    def organize_testing(self, preds, batch, batch_idx, dataloader_idx=0):
-        samples, labels = batch
-        preds_np = preds.detach().cpu().numpy()
-        labels_np = labels.detach().cpu().numpy()
-        
-        # Determine the mode based on dataloader_idx
-        if dataloader_idx == 0:
-            mode = 'valid'
-        elif dataloader_idx == 1:
-            mode = 'train'
-        else:
-            raise ValueError(f"Invalid dataloader index: {dataloader_idx}")
-        
-        # Append predictions
-        self.test_results[mode]['nf_pred'].append(preds_np)
-        self.test_results[mode]['nf_truth'].append(labels_np)
         
     def training_step(self, batch, batch_idx):
         """
-        Common training step shared among all subclasses
+        training
         """
         loss, preds = self.shared_step(batch, batch_idx)
         
@@ -503,7 +486,7 @@ class NewWaveTransformer(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         """
-        Common validation step shared among all subclasses
+        validation
         """
         loss, preds = self.shared_step(batch, batch_idx)
         
@@ -562,20 +545,37 @@ class NewWaveTransformer(pl.LightningModule):
     
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         """
-        Common testing step likely shared among all subclasses
+        Good ol testing step
         """
         loss, preds = self.shared_step(batch, batch_idx)
-        self.organize_testing(preds, batch, batch_idx, dataloader_idx)
-    
-    def on_test_end(self):
-        """
-        After testing, this method compiles results and logs them.
-        """
-        for mode in ['train', 'valid']:
-            if self.test_results[mode]['nf_pred']:
-                self.test_results[mode]['nf_pred'] = np.concatenate(self.test_results[mode]['nf_pred'], axis=0)
-                self.test_results[mode]['nf_truth'] = np.concatenate(self.test_results[mode]['nf_truth'], axis=0)
-                
-            else:
-                print(f"No test results for mode: {mode}")
+        samples, labels = batch
         
+        # log the loss for this batch
+        self.log("test_loss_step", loss, on_step=True, on_epoch=False, prog_bar=True)
+        
+        # keep preds and labels for aggregation
+        output = {"preds": preds.detach().cpu().numpy(), "labels": labels.detach().cpu().numpy()}
+        self.test_step_outputs.append(output)
+        return output
+    
+    def on_test_epoch_end(self):
+        # calculate and log aggregate metrics
+        all_preds = np.concatenate([x['preds'] for x in self.test_step_outputs], axis=0)
+        all_labels = np.concatenate([x['labels'] for x in self.test_step_outputs], axis=0)
+        
+        # free memory
+        self.test_step_outputs.clear()
+        
+        temp_dir = tempfile.mkdtemp()
+        try:
+            mlflow_client = self.logger.experiment
+            run_id = self.logger.run_id
+            
+            plot_results_dict = {"target": all_labels, "predictions": all_preds}
+            create_dft_plot_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=0)
+            
+            mlflow_client.log_artifacts(run_id, temp_dir, artifact_path="evaluation_plots")
+            print(f"--- Artifacts logged successfully to the corresponding run folder. ---")
+
+        finally:
+            shutil.rmtree(temp_dir)

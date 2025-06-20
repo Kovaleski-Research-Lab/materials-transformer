@@ -13,21 +13,7 @@ root = pyrootutils.setup_root(
 import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
-import mlflow
-from mlflow.types.schema import Schema, TensorSpec
-from mlflow.models import ModelSignature
 import torch
-from tqdm import tqdm
-import numpy as np
-import pandas as pd
-from functools import partial
-import tempfile
-
-# ---------------------
-# Import: Custom libs
-# ---------------------
-
-from utils.eval import create_dft_plot_artifact
 
 @hydra.main(version_base=None, config_path=str(root / "conf"), config_name="config")
 def main(cfg: DictConfig) -> float:
@@ -44,70 +30,17 @@ def main(cfg: DictConfig) -> float:
     trainer = instantiate(cfg.trainer)
     
     # auto log all MLflow entities
-    mlflow.pytorch.autolog(log_models=False)
+    #mlflow.pytorch.autolog(log_models=False)
 
     # 2. Train the model
-    # MLflow should automatically log due to MLflow logger configuration
     trainer.fit(model=model, datamodule=datamodule)
     
-    # 3. Prepare evaluation
-    run_id = trainer.logger.run_id
-    model_uri = f"runs:/{run_id}/model"
-    best_model_path = trainer.checkpoint_callback.best_model_path
-    best_model = type(model).load_from_checkpoint(best_model_path)
-    device = next(best_model.parameters()).device
-    
-    # get a single batch of the data and infer the signature
-    input_sample, output_sample = next(iter(datamodule.train_dataloader()))
-    input_sample = input_sample.cpu().numpy()
-    
-    input_shape = (-1, *input_sample.shape[1:]) # (-1, 1, 2, 166, 166)
-    output_shape = (-1, *output_sample.shape[1:])
-    input_schema = Schema([TensorSpec(np.dtype(np.float32), input_shape)])
-    output_schema = Schema([TensorSpec(np.dtype(np.float32), output_shape)])
-    signature = ModelSignature(inputs=input_schema, outputs=output_schema)
-    
-    # setup things for testing
-    datamodule.setup("test")
-    test_dataloader = datamodule.test_dataloader()
-    
-    # 6. Run inference in batches to avoid memory errors
-    print("--- Running manual evaluation loop... ---")
-    device = next(best_model.parameters()).device
-    best_model.to(device)
-    best_model.eval()
-
-    all_preds = []
-    all_labels = []
-    with torch.no_grad():
-        for samples, labels in tqdm(test_dataloader, desc="Inference on test set"):
-            samples = samples.to(device)
-            preds = best_model(samples)
-            all_preds.append(preds.cpu().numpy())
-            all_labels.append(labels.cpu().numpy())
-
-    # Concatenate all batch results
-    final_preds = np.concatenate(all_preds, axis=0)
-    final_labels = np.concatenate(all_labels, axis=0)
-
-    # 7. Log custom metrics and artifacts to the same run
-    mlflow.set_tracking_uri(trainer.logger.experiment.tracking_uri)
-
-    # Calculate a final test MSE and log it
-    test_mse = np.mean((final_preds - final_labels) ** 2)
-    mlflow.log_metric("test_set_mse", test_mse)
-    print(f"Logged test_set_mse: {test_mse:.4f}")
-
-    # Create the plot artifact
-    plot_results_dict = {"targets": final_labels, "predictions": final_preds}
-    with tempfile.TemporaryDirectory() as temp_dir:
-        create_dft_plot_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, cfg=cfg, sample_idx=0)
-        mlflow.log_artifacts(temp_dir, artifact_path="evaluation_plots")
-    print("--- Custom plot artifact logged successfully. ---")
+    # 3. Test the model
+    trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
 
     # --- Return objective for Optuna ---
     objective_metric_name = cfg.get("objective_metric", "val_loss")
-    objective_value = trainer.callback_metrics.get(objective_metric_name)
+    objective_value = trainer.checkpoint_callback.best_model_score.item()
     
     if objective_value is None:
         print(f"Warning: Objective metric '{objective_metric_name}' not found. Returning infinity.")
@@ -119,8 +52,15 @@ if __name__ == "__main__":
     main()
     
 # ARCHIVAL
-# old method with model signature
 
+# protocol for creating a model signature
+'''input_shape = (-1, *input_sample.shape[1:]) # (-1, 1, 2, 166, 166)
+output_shape = (-1, *output_sample.shape[1:])
+input_schema = Schema([TensorSpec(np.dtype(np.float32), input_shape)])
+output_schema = Schema([TensorSpec(np.dtype(np.float32), output_shape)])
+signature = ModelSignature(inputs=input_schema, outputs=output_schema)'''
+
+# old method
 '''# create partial functions for custom artifacts in MLflow
 plot_fn_partial = partial(create_dft_plot_artifact, cfg=cfg, sample_idx=0)
 dft_plot_fn = mlflow.models.make_metric(
