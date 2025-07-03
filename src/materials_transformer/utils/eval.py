@@ -1,5 +1,8 @@
 import torch
+import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.animation import FuncAnimation
 import numpy as np
 import pandas as pd
 import os
@@ -14,7 +17,7 @@ def create_dft_plot_artifact(
     #builtin_metrics: dict,
     artifacts_dir: str,
     sample_idx: int = 0
-) -> dict:
+) -> None:
     """
     A custom MLflow metric function for generating and saving DFT field plots.
     """
@@ -22,7 +25,7 @@ def create_dft_plot_artifact(
     
     # extract the data for the specified sample
     preds = eval_df['predictions'][sample_idx]
-    truths = eval_df['target'][sample_idx]
+    targets = eval_df['target'][sample_idx]
     
     # clarify configurations
    # H = cfg.data.near_field_dim
@@ -31,16 +34,11 @@ def create_dft_plot_artifact(
     #T = cfg.data.seq_len
     T = preds.shape[0]
     
-    # use configs to reshape back to [T, C, H, W]
-    #preds_reshaped = torch.from_numpy(preds).reshape(T, C, H, W)
-    #truths_reshaped = torch.from_numpy(truths).reshape(T, C, H, W)
     # convert to torch tensors and ensure float32
     preds_tensor = torch.from_numpy(preds).float()
-    target_tensor = torch.from_numpy(truths).float() 
+    target_tensor = torch.from_numpy(targets).float() 
     
     # separate real and imaginary components
-    #pred_real, pred_imag = preds_reshaped[:, 0, :, :], preds_reshaped[:, 1, :, :]
-    #truth_real, truth_imag = truths_reshaped[:, 0, :, :], truths_reshaped[:, 1, :, :]
     preds_real, preds_imag = preds_tensor[:, 0, :, :], preds_tensor[:, 1, :, :]
     target_real, target_imag = target_tensor[:, 0, :, :], target_tensor[:, 1, :, :]
 
@@ -115,6 +113,191 @@ def create_dft_plot_artifact(
     plot_path = os.path.join(artifacts_dir, f"dft_comparison_idx{sample_idx}.pdf")
     plt.savefig(plot_path)
     plt.close(fig)
-    print(f"Saved plot artifact to {plot_path}")
+    print(f"Saved dft plot artifact to {plot_path}")
     
-    return {}
+    return None
+
+def create_correlation_plot_artifact(
+    eval_df: pd.DataFrame, 
+    artifacts_dir: str,
+) -> None:
+    """
+    Create scatter plots comparing ground truth vs predicted values to visualize correlation,
+    averaged across all test samples
+    """
+    # extract the data for the specified sample
+    preds = eval_df['predictions'] # [N, T, C, H, W]
+    targets = eval_df['target'] # [N, T, C, H, W]
+    n_samples = preds.shape[0]
+    
+    # separate real and imaginary components for the final slice and flatten - # [N * H * W]
+    preds_real_flat, preds_imag_flat = preds[:, -1, 0, :, :].flatten(), preds[:, -1, 1, :, :].flatten()
+    targets_real_flat, targets_imag_flat = targets[:, -1, 0, :, :].flatten(), targets[:, -1, 1, :, :].flatten()
+    
+    # Compute correlations
+    corr_real = np.corrcoef(targets_real_flat, preds_real_flat)[0, 1]
+    corr_imag = np.corrcoef(targets_imag_flat, preds_imag_flat)[0, 1]
+        
+    # Create figure with two subplots
+    fig = plt.figure(figsize=(20, 8))
+    
+    # 1. Combined density scatter plot
+    ax1 = plt.subplot(121)
+    
+    # Plot real and imaginary components with different colors
+    hist2d_real = plt.hist2d(targets_real_flat, preds_real_flat, bins=100,
+                            cmap='Reds', norm=matplotlib.colors.LogNorm(),
+                            alpha=0.6)
+    hist2d_imag = plt.hist2d(targets_imag_flat, preds_imag_flat, bins=100,
+                            cmap='Blues', norm=matplotlib.colors.LogNorm(),
+                            alpha=0.6)
+    
+    # Add diagonal line
+    min_val = min(targets_real_flat.min(), targets_imag_flat.min(),
+                    preds_real_flat.min(), preds_imag_flat.min())
+    max_val = max(targets_real_flat.max(), targets_imag_flat.max(),
+                    preds_real_flat.max(), preds_imag_flat.max())
+    plt.plot([min_val, max_val], [min_val, max_val], 'k--')
+    
+    plt.xlabel('Ground Truth Field Value')
+    plt.ylabel('Predicted Field Value')
+    plt.title(f'Default Split Testing\nReal (r={corr_real:.4f}) & Imaginary (r={corr_imag:.4f})\nAveraged across {n_samples} samples')
+    
+    # Custom legend
+    legend_elements = [Patch(facecolor='red', alpha=0.6, label='Real Component'),
+        Patch(facecolor='blue', alpha=0.6, label='Imaginary Component'),
+        plt.Line2D([0], [0], color='k', linestyle='--', label='Perfect Correlation')
+    ]
+    plt.legend(handles=legend_elements)
+    plt.axis('square')
+    
+    # 2. Combined distribution plot
+    ax2 = plt.subplot(122)
+    
+    # Create histograms with both density and counts
+    counts_real, bins, _ = plt.hist(targets_real_flat, bins=100, alpha=0.3, 
+                                color='red', label='Ground Truth (Real)', density=True)
+    plt.hist(preds_real_flat, bins=bins, alpha=0.3, 
+            color='darkred', label='Prediction (Real)', density=True)
+    
+    counts_imag, bins, _ = plt.hist(targets_imag_flat, bins=100, alpha=0.3, 
+                                color='blue', label='Ground Truth (Imag)', density=True)
+    plt.hist(preds_imag_flat, bins=bins, alpha=0.3, 
+            color='darkblue', label='Prediction (Imag)', density=True)
+    
+    plt.xlabel('Field Value')
+    plt.ylabel('Density')
+    
+    # Add second y-axis with average counts per sample
+    ax2_counts = ax2.twinx()
+    bin_width = bins[1] - bins[0]
+    max_count = max(
+        max(counts_real) * len(targets_real_flat) * bin_width / n_samples,
+        max(counts_imag) * len(targets_imag_flat) * bin_width / n_samples
+    )
+    ax2_counts.set_ylim(0, max_count)
+    ax2_counts.set_ylabel('Average Pixel Count per Sample')
+    
+    plt.title(f'Distribution of Field Values\nReal & Imaginary Components\nAveraged across {n_samples} samples')
+    ax2.legend()
+        
+    # Calculate statistics
+    stats_text = (
+        'Real Component:\n'
+        f'    Mean (Truth/Pred): {targets_real_flat.mean():.3f}/{preds_real_flat.mean():.3f}\n'
+        f'    Std (Truth/Pred):  {targets_real_flat.std():.3f}/{preds_real_flat.std():.3f}\n'
+        f'    MAE: {np.mean(np.abs(targets_real_flat - preds_real_flat)):.3f}\n'
+        f'    RMSE: {np.sqrt(np.mean((targets_real_flat - preds_real_flat)**2)):.3f}\n'
+        '\nImaginary Component:\n'
+        f'    Mean (Truth/Pred): {targets_imag_flat.mean():.3f}/{preds_imag_flat.mean():.3f}\n'
+        f'    Std (Truth/Pred):  {targets_imag_flat.std():.3f}/{preds_imag_flat.std():.3f}\n'
+        f'    MAE: {np.mean(np.abs(targets_imag_flat - preds_imag_flat)):.3f}\n'
+        f'    RMSE: {np.sqrt(np.mean((targets_imag_flat - preds_imag_flat)**2)):.3f}'
+    )
+    
+    plt.text(0.05, 0.95, stats_text, 
+            transform=ax2.transAxes,
+            verticalalignment='top', 
+            fontfamily='monospace',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, pad=1),
+            fontsize=10)
+    
+    plt.tight_layout()
+
+    # save the artifact
+    plot_path = os.path.join(artifacts_dir, "correlation_analysis.pdf")
+    plt.savefig(plot_path)
+    plt.close(fig)
+    print(f"Saved correlation plot artifact to {plot_path}")
+    
+    return None
+
+def create_flipbook_artifact(
+    eval_df: pd.DataFrame,
+    artifacts_dir: str,
+    sample_idx: int = 0
+) -> None:
+    """
+    Create an animation of 2D field slices across the propagation volume.
+    """
+    # extract the data for the specified sample
+    preds = eval_df['predictions'][sample_idx]
+    targets = eval_df['target'][sample_idx]
+    frames = preds.shape[0] # number of slices
+    
+    # convert to torch tensors and ensure float32
+    preds_tensor = torch.from_numpy(preds).float()
+    target_tensor = torch.from_numpy(targets).float() 
+    
+    # separate real and imaginary components and reshape for animation
+    preds_real, preds_imag = preds_tensor[:, 0, :, :], preds_tensor[:, 1, :, :]
+    target_real, target_imag = target_tensor[:, 0, :, :], target_tensor[:, 1, :, :]
+    target_real = target_real.permute(1, 2, 0)
+    target_imag = target_imag.permute(1, 2, 0)
+    preds_real = preds_real.permute(1, 2, 0)
+    preds_imag = preds_imag.permute(1, 2, 0)
+
+    # convert to polar coords
+    target_mag, target_phase = mapping.cartesian_to_polar(target_real, target_imag)
+    pred_mag, pred_phase = mapping.cartesian_to_polar(preds_real, preds_imag)
+    
+    # bundle
+    fields_list = [target_mag, pred_mag, target_phase, pred_phase]
+    identifier_list = ['True Magnitude', 'Predicted Magnitude', 'True Phase', 'Predicted Phase']
+    
+    # generate the animations
+    anim_dir = os.path.join(artifacts_dir, "flipbooks")
+    os.makedirs(anim_dir, exist_ok=True)
+    for fields, identifier in zip(fields_list, identifier_list):
+        # like to have distinct color maps for magnitude vs phase
+        cmap = 'viridis' if 'Magnitude' in identifier else 'twilight_shifted'
+        
+        fig, ax = plt.subplots(figsize=(8, 8))
+        
+        # Initialize: Frame 0
+        im = ax.imshow(fields[:, :, 0], cmap=cmap, animated=True)
+        ax.set_title(f'{identifier} - Frame 0/{frames}')
+        ax.grid(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        
+        # frame updating
+        def update(frame):
+            im.set_array(fields[:, :, frame])
+            ax.set_title(f'{identifier} - Frame {frame}/{frames}')
+            return [im]
+        
+        # Create: Animation object
+        anim = FuncAnimation(
+            fig, 
+            update,
+            frames=frames,
+            interval=250, # ms between frames 
+            blit=True
+        )
+        
+        # save the artifact
+        anim_path = os.path.join(anim_dir, f"{identifier} {sample_idx}.gif")
+        anim.save(anim_path)
+        plt.close(fig)
+        print(f"Saved a field animation artifact to {anim_path}")

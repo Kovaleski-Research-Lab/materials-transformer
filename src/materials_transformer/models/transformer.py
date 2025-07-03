@@ -8,7 +8,8 @@ from typing import Any
 import tempfile
 import shutil
 
-from utils.eval import create_dft_plot_artifact
+from utils.eval import create_dft_plot_artifact, create_correlation_plot_artifact, create_flipbook_artifact
+from utils.fourier import FNetEncoderLayer
 
 # helper function(s)
 def get_padding_2d(input_shape, patch_size):
@@ -29,6 +30,7 @@ class NewWaveTransformer(pl.LightningModule):
         num_heads: int,
         mlp_ratio: float,
         use_diff_loss: bool,
+        mixing: str,
         lambda_diff: float,
         dropout: float,
         # relevant hyperparameters 
@@ -43,6 +45,7 @@ class NewWaveTransformer(pl.LightningModule):
         self.depth = depth
         self.num_heads = num_heads
         self.mlp_ratio = mlp_ratio
+        self.mixing = mixing
         self.use_diff_loss = use_diff_loss
         self.lambda_diff = lambda_diff
         self.dropout = dropout
@@ -105,18 +108,23 @@ class NewWaveTransformer(pl.LightningModule):
         self.temporal_embed = nn.Parameter(torch.zeros(1, self.max_steps, self.embed_dim)) # Temporal
 
         # 3. Transformer Block (Encoder Layers)
-        transformer_layer = nn.TransformerEncoderLayer(
-             d_model=self.embed_dim,
-             nhead=self.num_heads,
-             dim_feedforward=int(self.embed_dim * self.mlp_ratio),
-             dropout=self.dropout,
-             activation=F.gelu,
-             batch_first=True # Crucial for easier handling
-        )
-        # Use TransformerEncoder with attention
-        self.transformer_block = nn.TransformerEncoder(transformer_layer, num_layers=self.depth)
-        # LayerNorm before prediction head is common
-        self.norm = nn.LayerNorm(self.embed_dim)
+        if self.mixing == 'default':
+            transformer_layer = nn.TransformerEncoderLayer(
+                d_model=self.embed_dim,
+                nhead=self.num_heads,
+                dim_feedforward=int(self.embed_dim * self.mlp_ratio),
+                dropout=self.dropout,
+                activation=F.gelu,
+                batch_first=True # Crucial for easier handling
+            )
+            # Use TransformerEncoder with attention
+            self.transformer_block = nn.TransformerEncoder(transformer_layer, num_layers=self.depth)
+            # LayerNorm before prediction head
+            self.norm = nn.LayerNorm(self.embed_dim)
+        elif self.mixing == 'fnet':
+            fnet_layers = [FNetEncoderLayer(self.embed_dim, self.mlp_ratio, self.dropout) for _ in range(self.depth)]
+            self.transformer_block = nn.Sequential(*fnet_layers)
+            self.norm = nn.LayerNorm(self.embed_dim) 
 
         # 4. Prediction Head
         # Takes the final embedding (D) and predicts all patch features (N*P*P*C)
@@ -270,20 +278,25 @@ class NewWaveTransformer(pl.LightningModule):
             # 3. Create Causal Mask
             attn_mask = self._generate_square_subsequent_mask(T * N, device) # Does not require grad
 
-            # 4. Pass through Transformer Block
-            transformer_out = self.transformer_block(
-                src=full_seq_embeddings,
-                mask=attn_mask
-            ) # Uses transformer parameters. Output *should* require grad.
+            # 4. Pass through Transformer Block and norm
+            if self.mixing == 'default':
+                transformer_out = self.transformer_block(
+                    src=full_seq_embeddings,
+                    mask=attn_mask
+                )
 
-            # 5. Normalize
-            transformer_out_norm = self.norm(transformer_out) # Uses norm parameters. Output *should* require grad.
+                # normalize
+                transformer_out_norm = self.norm(transformer_out)
+                
+            elif self.mixing == 'fnet':
+                # norm is already handled implicitly
+                transformer_out_norm = self.transformer_block(full_seq_embeddings)
 
-            # 6. Extract Output Embeddings for Prediction
+            # 5. Extract Output Embeddings for Prediction
             # T should be T_out here
             output_embeddings = transformer_out_norm.view(B, T, N, D)[:, :, -1, :] # Slicing/view *should* preserve grad. Output *should* require grad.
 
-            # 7. Generate Predictions
+            # 6. Generate Predictions
             # _predict_frame_from_embedding uses head parameters.
             # Input `output_embeddings.reshape(-1, D)` *should* require grad.
             preds = self._predict_frame_from_embedding(output_embeddings.reshape(-1, D))
@@ -307,8 +320,11 @@ class NewWaveTransformer(pl.LightningModule):
                     attn_mask = self._generate_square_subsequent_mask(current_seq_len_tokens, device)
 
                     # Pass current sequence through Transformer
-                    transformer_out = self.transformer_block(src=current_seq_embeddings, mask=attn_mask) # (B, current_seq_len_tokens, D)
-                    transformer_out_norm = self.norm(transformer_out) # Normalize
+                    if self.mixing == 'default':
+                        transformer_out = self.transformer_block(src=current_seq_embeddings, mask=attn_mask) # (B, current_seq_len_tokens, D)
+                        transformer_out_norm = self.norm(transformer_out) # Normalize
+                    elif self.mixing == 'fnet':
+                        transformer_out_norm = self.transformer_block(current_seq_embeddings)
 
                     # Get embedding corresponding to the *last* input token
                     last_embedding = transformer_out_norm[:, -1, :] # (B, D)
@@ -573,6 +589,8 @@ class NewWaveTransformer(pl.LightningModule):
             
             plot_results_dict = {"target": all_labels, "predictions": all_preds}
             create_dft_plot_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=0)
+            create_correlation_plot_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir)
+            create_flipbook_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=0)
             
             mlflow_client.log_artifacts(run_id, temp_dir, artifact_path="evaluation_plots")
             print(f"--- Artifacts logged successfully to the corresponding run folder. ---")

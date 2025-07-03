@@ -7,6 +7,7 @@ _target_: models.transformer.NewWaveTransformer
 # - num_heads: attention heads
 # - mlp_ratio:
 # - use_diff_loss: whether to use the difference loss term (unfinished)
+# - mixing: token mixing strategy. default or fnet
 # - lambda_diff: diff loss hyperparameter
 
 patch_size: 11
@@ -15,6 +16,7 @@ depth: 4
 num_heads: 8
 mlp_ratio: 4.0
 use_diff_loss: False
+mixing: 'fnet'
 lambda_diff: 0.1
 dropout: 0.0
 
