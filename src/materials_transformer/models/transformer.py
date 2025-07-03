@@ -1,3 +1,4 @@
+from io import BytesIO
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -7,9 +8,10 @@ import numpy as np
 from typing import Any
 import tempfile
 import shutil
+import matplotlib.pyplot as plt
 
 from utils.eval import create_dft_plot_artifact, create_correlation_plot_artifact, create_flipbook_artifact
-from utils.fourier import FNetEncoderLayer
+from utils.fourier import FNetEncoderLayer, FNOTransformerLayer
 
 # helper function(s)
 def get_padding_2d(input_shape, patch_size):
@@ -31,6 +33,7 @@ class NewWaveTransformer(pl.LightningModule):
         mlp_ratio: float,
         use_diff_loss: bool,
         mixing: str,
+        num_blocks: int,
         lambda_diff: float,
         dropout: float,
         # relevant hyperparameters 
@@ -46,6 +49,7 @@ class NewWaveTransformer(pl.LightningModule):
         self.num_heads = num_heads
         self.mlp_ratio = mlp_ratio
         self.mixing = mixing
+        self.num_blocks = num_blocks
         self.use_diff_loss = use_diff_loss
         self.lambda_diff = lambda_diff
         self.dropout = dropout
@@ -121,10 +125,23 @@ class NewWaveTransformer(pl.LightningModule):
             self.transformer_block = nn.TransformerEncoder(transformer_layer, num_layers=self.depth)
             # LayerNorm before prediction head
             self.norm = nn.LayerNorm(self.embed_dim)
+            # get attention weights for analysis
+            self.attn_weights = None
+            
+            def get_attention_hook(module, input, output):
+                self.attn_weights = output[1] # attn weights are the second element of the output tuple
+                
+            # register the hook on the self-attention module of the last layer
+            self.transformer_block.layers[-1].self_attn.register_forward_hook(get_attention_hook)
+            
         elif self.mixing == 'fnet':
             fnet_layers = [FNetEncoderLayer(self.embed_dim, self.mlp_ratio, self.dropout) for _ in range(self.depth)]
             self.transformer_block = nn.Sequential(*fnet_layers)
-            self.norm = nn.LayerNorm(self.embed_dim) 
+            #self.norm = nn.LayerNorm(self.embed_dim)
+            
+        elif self.mixing == 'afno':
+            fno_layers = [FNOTransformerLayer(self.embed_dim, self.num_blocks, self.mlp_ratio, self.dropout) for _ in range(self.depth)]
+            self.transformer_block = nn.Sequential(*fno_layers)
 
         # 4. Prediction Head
         # Takes the final embedding (D) and predicts all patch features (N*P*P*C)
@@ -288,7 +305,7 @@ class NewWaveTransformer(pl.LightningModule):
                 # normalize
                 transformer_out_norm = self.norm(transformer_out)
                 
-            elif self.mixing == 'fnet':
+            elif self.mixing in ['fnet', 'afno']:
                 # norm is already handled implicitly
                 transformer_out_norm = self.transformer_block(full_seq_embeddings)
 
@@ -323,7 +340,7 @@ class NewWaveTransformer(pl.LightningModule):
                     if self.mixing == 'default':
                         transformer_out = self.transformer_block(src=current_seq_embeddings, mask=attn_mask) # (B, current_seq_len_tokens, D)
                         transformer_out_norm = self.norm(transformer_out) # Normalize
-                    elif self.mixing == 'fnet':
+                    elif self.mixing in ['fnet', 'afno']:
                         transformer_out_norm = self.transformer_block(current_seq_embeddings)
 
                     # Get embedding corresponding to the *last* input token
@@ -573,6 +590,64 @@ class NewWaveTransformer(pl.LightningModule):
         output = {"preds": preds.detach().cpu().numpy(), "labels": labels.detach().cpu().numpy()}
         self.test_step_outputs.append(output)
         return output
+    
+    def on_validation_epoch_end(self):
+        if self.attn_weights is None:
+            return
+        
+        # grab a single sample from the batch -> (num_heads, seq_len, seq_len)
+        attn_map = self.attn_weights[0].detach().cpu()
+        
+        # average the attention weights across all heads
+        attn_map = attn_map.mean(dim=0)
+        
+        cls_attn_map = attn_map[0, 1:]
+        
+        # reshape 1D patch attention vector into 2D grid
+        grid_h, grid_w = self.grid_size
+        # ensure num patches matches
+        if cls_attn_map.shape[0] == grid_h * grid_w:
+            img_map = cls_attn_map.reshape(grid_h, grid_w)
+        else:
+            print("Attention map size does not match grid size")
+            return
+        
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.imshow(img_map, cmap='viridis', interpolation='nearest')
+        ax.set_title(f"Attention Map from [CLS] Token at Epoch {self.current_epoch}")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        
+        # logging to mlflow
+        self.log_matplotlib_figure(fig, "attention_map_evolution")
+
+        # clear the stored weights for the next validation pass
+        self.attn_weights = None
+        
+    def log_matplotlib_figure(self, fig, artifact_name):
+        """Logs a matplotlib figure to MLflow."""
+        # Save the plot to a buffer
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        
+        # Get the MLflow logger client
+        mlflow_logger = self.logger.experiment
+        
+        try:
+            # Log the image from the buffer
+            mlflow_logger.log_image(
+                self.logger.run_id,
+                buf,
+                f"{artifact_name}.png",
+                # step to create slider
+                step=self.current_epoch
+            )
+        except Exception as e:
+            print(f"Failed to log image to MLflow: {e}")
+
+        # Close the figure to free memory
+        plt.close(fig)
     
     def on_test_epoch_end(self):
         # calculate and log aggregate metrics
