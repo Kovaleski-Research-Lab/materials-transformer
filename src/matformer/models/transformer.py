@@ -65,7 +65,7 @@ class NewWaveTransformer(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         
-                # store necessary lists for tracking metrics per fold
+        # store necessary lists for tracking metrics per fold
         self.test_results = {'train': {'nf_pred': [], 'nf_truth': []},
                              'valid': {'nf_pred': [], 'nf_truth': []}}
         
