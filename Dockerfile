@@ -26,4 +26,4 @@ RUN uv pip sync uv.lock --system --no-cache --require-hashes --index-strategy un
 # Copy your project source code
 COPY src/ ./src/
 
-ENTRYPOINT ["python3", "src/materials_transformer/main.py"]
+ENTRYPOINT ["python3", "src/matformer/main.py"]

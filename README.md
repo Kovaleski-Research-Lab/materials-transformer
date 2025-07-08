@@ -15,7 +15,7 @@ uv pip sync uv.lock --system --no-cache --require-hashes --index-strategy unsafe
 
 5. Run the following to train a model:
 ```
-python src/materials_transformer/main.py
+python src/matformer/main.py
 ```
 
 6. Check the results/ dir for mlflow logs, etc.
