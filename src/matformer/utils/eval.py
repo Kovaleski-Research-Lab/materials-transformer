@@ -301,3 +301,34 @@ def create_flipbook_artifact(
         anim.save(anim_path)
         plt.close(fig)
         print(f"Saved a field animation artifact to {anim_path}")
+        
+# IR Project plotting
+        
+def create_matrix_artifact(
+    eval_df: pd.DataFrame,
+    artifacts_dir: str,
+    threshold: float = 0.5
+) -> None:
+    """Plot the first three actual vs. predicted matrices."""
+    fig, axes = plt.subplots(3, 2, figsize=(10, 15))
+    
+    actuals = eval_df['target']
+    logits = torch.tensor(eval_df['predictions'])
+    preds_binary = (torch.sigmoid(logits) > threshold).float()
+
+    for i in range(3):
+        axes[i, 0].imshow(actuals[i], cmap='gray', vmin=0, vmax=1)
+        axes[i, 0].set_title(f'Actual Matrix {i + 1}')
+
+        axes[i, 1].imshow(preds_binary[i], cmap='gray', vmin=0, vmax=1)
+        axes[i, 1].set_title(f'Predicted Matrix {i + 1}')
+
+    plt.tight_layout()
+    
+    # save the artifact
+    plot_path = os.path.join(artifacts_dir, "matrix_visualizations.pdf")
+    plt.savefig(plot_path)
+    plt.close(fig)
+    print(f"Saved correlation plot artifact to {plot_path}")
+    
+    return None

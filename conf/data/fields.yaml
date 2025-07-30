@@ -1,4 +1,4 @@
-_target_: data_modules.fields.NFDataModule
+_target_: data_modules.fields_dm.NFDataModule
 
 batch_size: 8
 n_cpus: 5

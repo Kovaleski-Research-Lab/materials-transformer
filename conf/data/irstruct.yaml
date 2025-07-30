@@ -1,0 +1,6 @@
+_target_: data_modules.ir_dm.IRDataModule
+
+batch_size: 16
+n_cpus: 5
+data_path: ${paths.ir_data}
+val_split: 0.2
