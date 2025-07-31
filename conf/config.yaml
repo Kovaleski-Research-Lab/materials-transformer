@@ -1,6 +1,6 @@
 defaults:
-  - model: irstructformer
-  - data: irstruct
+  - model: transformer
+  - data: fields
   - trainer: default
   - _self_
 
@@ -9,7 +9,7 @@ hydra:
     dir: ${paths.results}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 # --- Global Project Configuration ---
-project_name: "ir-graph-transformer"
+project_name: "fields-transformer"
 version: "1.0.0"
 matmul_precision: "medium"
 
