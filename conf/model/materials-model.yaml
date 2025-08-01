@@ -1,14 +1,16 @@
-_target_: models.irstructformer.IRTransformer
+_target_: models.smiles_transformer.SmilesTransformer
 
 # Parameters
 
 input_dim: 1
 model_dim: 64
 num_heads: 4
-depth: 4
+encoder_depth: 4
+decoder_depth: 4
 rows: 80
 cols: 160
 dropout: 0.0
+target_vocab_size: 7
 
 # General Parameters
 

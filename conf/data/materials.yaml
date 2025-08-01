@@ -1,4 +1,4 @@
-_target_: data_modules.ir_dm.IRDataModule
+_target_: data_modules.ir_dm.SmilesDataModule
 
 batch_size: 16
 n_cpus: 5
