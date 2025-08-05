@@ -10,8 +10,8 @@ hydra:
 
 # --- Global Project Configuration ---
 project_name: "smiles-transformer"
-mode: test
-mlflow_run_id: f3a167215b884bab810a0c453b12f99d
+mode: train
+mlflow_run_id: null
 version: "1.0.0"
 matmul_precision: "medium"
 
