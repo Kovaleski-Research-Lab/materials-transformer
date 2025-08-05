@@ -21,21 +21,6 @@ from typing import Dict
 import pandas as pd
 from rdkit import Chem
 
-def graph_collate_fn(batch):
-    """
-    Takes a list of samples from TensorDataset and groups the labels.
-    """
-    # Unzip the batch: [(X1, y_atom1, y_adj1), (X2, y_atom2, y_adj2), ...]
-    spectra, atom_labels, adj_labels = zip(*batch)
-    
-    # Stack samples and labels into batch tensors
-    spectra_batch = torch.stack(spectra, 0)
-    atom_labels_batch = torch.stack(atom_labels, 0)
-    adj_labels_batch = torch.stack(adj_labels, 0)
-    
-    # Return in the format the model expects
-    return spectra_batch, (atom_labels_batch, adj_labels_batch)
-
 # ----------------------
 # DATAMODULE and DATASET
 # ----------------------
@@ -86,15 +71,12 @@ class SmilesDataModule(LightningDataModule):
         
         # tokenize and pad smiles strings
         tokenized_smiles = []
-        sos_token = self.char_to_idx['<SOS>']
-        eos_token = self.char_to_idx['<EOS>']
-        
         for smiles in all_smiles:
             tokenized = self.tokenizer.encode(smiles)
             
             # pad to max length
             padding_needed = self.max_smiles_len - len(tokenized)
-            padded_tokens = tokenized + [self.pad_token_idx] * padding_needed
+            padded_tokens = tokenized + [self.tokenizer.pad_idx] * padding_needed
             tokenized_smiles.append(padded_tokens[:self.max_smiles_len])
             
         y_tensor = torch.tensor(tokenized_smiles, dtype=torch.long)
@@ -117,8 +99,7 @@ class SmilesDataModule(LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.n_cpus,
             shuffle=True,
-            persistent_workers=True,
-            collate_fn=graph_collate_fn
+            persistent_workers=True
         )
     
     def val_dataloader(self):
@@ -127,8 +108,7 @@ class SmilesDataModule(LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.n_cpus,
             shuffle=False,
-            persistent_workers=True,
-            collate_fn=graph_collate_fn
+            persistent_workers=True
         )
     
     def test_dataloader(self):
@@ -137,8 +117,7 @@ class SmilesDataModule(LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.n_cpus,
             shuffle=False,
-            persistent_workers=True,
-            collate_fn=graph_collate_fn
+            persistent_workers=True
         )
         
 # ----------------------
@@ -151,11 +130,12 @@ class SMILESTokenizer:
         self.idx_to_char = idx_to_char
         
         # special indices
-        self.pad_idx = char_to_idx('<PAD>')
-        self.sos_idx = char_to_idx('<SOS>')
-        self.eos_idx = char_to_idx('<EOS>')
+        self.pad_idx = char_to_idx['<PAD>']
+        self.sos_idx = char_to_idx['<SOS>']
+        self.eos_idx = char_to_idx['<EOS>']
         self.vocab_size = len(char_to_idx)
         
+    @classmethod 
     def from_smiles_list(cls, smiles_list):
         """Factory method to create a tokenizer from a list of SMILES strings."""
         char_set = set()
@@ -174,11 +154,13 @@ class SMILESTokenizer:
         """Converts SMILES string to a list of integer tokens"""
         tokens = [self.char_to_idx[char] for char in smiles_string]
         return [self.sos_idx] + tokens + [self.eos_idx]
-    
+        
     def decode(self, token_list, skip_special_tokens=True):
         """Converts list of integer tokens back to SMILES string"""
+        token_list = token_list.flatten()
         chars = []
-        for token in token_list:
+        for token_tensor in token_list:
+            token = token_tensor.item()
             if token == self.eos_idx and skip_special_tokens:
                 break
             if skip_special_tokens and token in [self.pad_idx, self.sos_idx]:

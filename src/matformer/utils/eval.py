@@ -332,3 +332,9 @@ def create_matrix_artifact(
     print(f"Saved correlation plot artifact to {plot_path}")
     
     return None
+
+def create_matrix_artifact(
+    eval_df: pd.DataFrame,
+    artifacts_dir: str
+) -> None:
+    pass

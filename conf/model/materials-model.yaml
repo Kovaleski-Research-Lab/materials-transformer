@@ -10,7 +10,7 @@ decoder_depth: 4
 rows: 80
 cols: 160
 dropout: 0.0
-target_vocab_size: 7
+target_vocab_size: 26 # 23 unique chars in the dataset + 3 specials
 
 # General Parameters
 
@@ -30,4 +30,3 @@ lr_scheduler:
 
 loss_func: 'bce'
 seq_len: 500
-num_atom_types: 7

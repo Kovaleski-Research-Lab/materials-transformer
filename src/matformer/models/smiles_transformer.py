@@ -44,14 +44,13 @@ class PositionalEncoding(nn.Module):
             x = x + self.pe[:x.size(0), :]
         return x
 
-class IRTransformer(pl.LightningModule):
+class SmilesTransformer(pl.LightningModule):
     def __init__(
         self,
         # arch specs
         input_dim: int,
         model_dim: int,
         num_heads: int,
-        depth: int,
         rows: int,
         cols: int,
         dropout: float,
@@ -112,67 +111,34 @@ class IRTransformer(pl.LightningModule):
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
         self.test_step_outputs = []
         
-    def forward(self, src_spectrum, trg_smiles):
-        # 1. Encode the IR spectrum
-        src_embedded = self.encoder_embedding(src_spectrum)
+    # forward is separated into its distinct components for testing versatility
+        
+    def encode(self, src_spectrum):
+        # Encode the IR spectrum
+        src_embedded = self.embedding(src_spectrum)
         src_encoded = self.pos_encoder(src_embedded)
-        memory = self.transformer_encoder(src_encoded) # context
+        return self.transformer_encoder(src_encoded)
+    
+    def decode(self, tgt_smiles, memory):
+        # Decode the target sequence
+        tgt_embedded = self.smiles_embedding(tgt_smiles)
+        tgt_encoded = self.pos_encoder(tgt_embedded)
         
-        # 2. Prepare target sequence for the decoder
-        trg_embedded = self.smiles_embedding(trg_smiles)
-        trg_encoded = self.pos_encoder(trg_embedded)
+        # casual mask
+        tgt_seq_len = tgt_smiles.size(1)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_seq_len, device=tgt_smiles.device)
         
-        # 3. Decode
-        decoder_output = self.transformer_decoder(tgt=trg_encoded, memory=memory)
-        
+        decoder_output = self.transformer_decoder(
+            tgt=tgt_encoded, 
+            memory=memory,
+            tgt_mask=tgt_mask
+        )
         return self.output_fc(decoder_output)
-    
-    '''def compute_loss(self, preds, labels, choice="bce"):
-        if choice == 'bce':
-            # Binary Cross Entropy
-            preds = preds.to(torch.float32).contiguous()
-            labels = labels.to(torch.float32).contiguous()
-            fn = torch.nn.BCEWithLogitsLoss()
-            loss = fn(preds, labels)
-            
-        elif choice == 'mse':
-            # Mean Squared Error
-            preds = preds.to(torch.float32).contiguous()
-            labels = labels.to(torch.float32).contiguous()
-            fn = torch.nn.MSELoss()
-            loss = fn(preds, labels)
-            
-        elif choice == 'psnr':
-            # Peak Signal-to-Noise Ratio
-            preds, labels = preds.unsqueeze(1), labels.unsqueeze(1)  # channel dim
-            fn = PeakSignalNoiseRatio(data_range=1.0).to(self._device)
-            loss = fn(preds, labels)
-
-        else:
-            raise ValueError(f"Unsupported loss function: {choice}")
-            
-        return loss
-    
-    def objective(self, preds, labels):
-        return {"loss": self.compute_loss(preds, labels, choice=self.loss_func)}'''
         
-    def objective(self, batch):
-        samples, labels = batch # labels should now be a tuple: (true_atom_types, true_adj_matrix)
-        true_atom_types, true_adj_matrix = labels
-        
-        pred_atom_types, pred_adj_matrix = self.forward(samples)
-
-        # --- Combined Loss ---
-        # 1. Loss for predicting the correct atom types (Nodes)
-        # Note: permute is needed as CrossEntropyLoss expects (N, C, ...)
-        loss_nodes = F.cross_entropy(pred_atom_types.permute(0, 2, 1), true_atom_types)
-        
-        # 2. Loss for predicting the correct bonds (Edges)
-        loss_edges = F.binary_cross_entropy_with_logits(pred_adj_matrix, true_adj_matrix)
-
-        # Combine the losses (you can weight them if needed)
-        total_loss = loss_nodes + loss_edges
-        return {"loss": total_loss, "loss_nodes": loss_nodes, "loss_edges": loss_edges}
+    def forward(self, src_spectrum, tgt_smiles):
+        memory = self.encode(src_spectrum)
+        logits = self.decode(tgt_smiles, memory)
+        return logits
     
     def configure_optimizers(self):
         optimizer = self.optimizer_cfg(params=self.parameters())
@@ -194,14 +160,16 @@ class IRTransformer(pl.LightningModule):
         
         # get output
         logits = self.forward(spectrum, smiles_input)
+        
+        #print(f"smiles_target: {smiles_target.reshape(-1)}")
+        #print(f"logits: {logits.reshape(-1, logits.shape[-1])}")
 
         # calc loss
         loss = F.cross_entropy(
             logits.reshape(-1, logits.shape[-1]),
             smiles_target.reshape(-1),
-            ignore_index = self.pad_token_idx
+            ignore_index = self.trainer.datamodule.tokenizer.pad_idx
         )
-        self.log("train_loss", loss)
         return loss
     
     def training_step(self, batch, batch_idx):
@@ -214,29 +182,42 @@ class IRTransformer(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss = self.shared_step(batch, batch_idx)
         # Log the metrics
-        self.log_dict("val_loss", loss, 
+        self.log("val_loss", loss, 
                     on_step=False, on_epoch=True)
         return loss
     
     @torch.no_grad()
-    def generate_smiles(self, spectrum, max_len=100, sos_idx=0, eos_idx=1):
+    def generate_smiles(self, spectrum, tokenizer, max_len=100):
         self.eval()
-        # Encode the spectrum once
-        memory = self.transformer_encoder(self.pos_encoder(self.encoder_embedding(spectrum)))
         
-        # Start with the <SOS> token
-        output_tokens = torch.tensor([sos_idx], dtype=torch.long, device=self.device)
-
+        # Encode the spectrum once
+        memory = self.encode(spectrum)
+        
+        # Start with the <SOS> token for each item in batch
+        batch_size = spectrum.shape[0]
+        output_tokens = torch.full(
+            (batch_size, 1),
+            fill_value=tokenizer.sos_idx,
+            dtype=torch.long,
+            device=self.device
+        )
+        
+        has_finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         for _ in range(max_len - 1):
-            # Get model prediction for the next token
-            logits = self.forward(spectrum, output_tokens.unsqueeze(0))
-            next_token = logits.argmax(dim=-1)[:, -1] # Get the last token
+            # decode current sequences to get logits for NEXT tokens
+            logits = self.decode(output_tokens, memory)
+            
+            # get last predicted token for each sequence in batch
+            next_tokens = logits.argmax(dim=-1)[:, -1] # shape: (batch)
             
             # Append the prediction to our output
-            output_tokens = torch.cat([output_tokens, next_token], dim=0)
+            output_tokens = torch.cat([output_tokens, next_tokens.unsqueeze(1)], dim=1)
+            
+            # update tracker when sequence generates <EOS>
+            has_finished = has_finished | (next_tokens == tokenizer.eos_idx)
 
             # Stop if we predict the <EOS> token
-            if next_token.item() == eos_idx:
+            if has_finished.all():
                 break
                 
         return output_tokens
@@ -245,7 +226,7 @@ class IRTransformer(pl.LightningModule):
         spectrum, smiles_true = batch
 
         # generate an output string
-        smiles_pred = self.generate_smiles(spectrum)
+        smiles_pred = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
         
         output = {
             "pred_tokens": smiles_pred.detach().cpu(),
@@ -268,13 +249,15 @@ class IRTransformer(pl.LightningModule):
 
         # Decode all token sequences back into strings
         for output in self.test_step_outputs:
-            # Decode the true SMILES string
-            true_smiles = tokenizer.decode(output['true_tokens'], skip_special_tokens=True)
-            true_smiles_list.append(true_smiles)
+            # output['true_tokens'] is a 2D tensor of shape (batch_size, seq_len)
+            for true_token_sequence in output['true_tokens']:
+                true_smiles = tokenizer.decode(true_token_sequence, skip_special_tokens=True)
+                true_smiles_list.append(true_smiles)
             
-            # Decode the predicted SMILES string
-            pred_smiles = tokenizer.decode(output['pred_tokens'], skip_special_tokens=True)
-            pred_smiles_list.append(pred_smiles)
+            for pred_token_sequence in output['pred_tokens']:
+                #print(pred_token_sequence)
+                pred_smiles = tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
+                pred_smiles_list.append(pred_smiles)
         
         # Free memory
         self.test_step_outputs.clear()
