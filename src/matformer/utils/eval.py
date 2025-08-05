@@ -350,14 +350,14 @@ def create_molecules_artifact(
         mol_img = Draw.MolToImage(mol, size=(300,300))
         axes[i, 0].imshow(mol_img)
         axes[i, 0].axis('off')
-        axes[i, 0].set_title(f"True Molecule {i}\nSMILES: {true_smiles_list[i]}")
+        axes[i, 0].set_title(f"True Molecule {i+1}\nSMILES: {true_smiles_list[i]}")
         
         # prediction
         mol = Chem.MolFromSmiles(pred_smiles_list[i])
         mol_img = Draw.MolToImage(mol, size=(300,300))
         axes[i, 1].imshow(mol_img)
         axes[i, 1].axis('off')
-        axes[i, 1].set_title(f"Predicted Molecule {i}\nSMILES: {true_smiles_list[i]}")
+        axes[i, 1].set_title(f"Predicted Molecule {i+1}\nSMILES: {pred_smiles_list[i]}")
         
     plt.tight_layout()
 
