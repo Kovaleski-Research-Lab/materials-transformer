@@ -347,6 +347,8 @@ def create_molecules_artifact(
     for i in range(5):
         # draw and plot ground truth
         mol = Chem.MolFromSmiles(true_smiles_list[i])
+        if not mol: # handle potential for a NULL molecule
+            continue
         mol_img = Draw.MolToImage(mol, size=(300,300))
         axes[i, 0].imshow(mol_img)
         axes[i, 0].axis('off')

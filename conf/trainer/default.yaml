@@ -11,7 +11,7 @@ logger:
   experiment_name: ${project_name}
   run_name: run02
   tracking_uri: "file://${paths.results}/mlruns"
-  log_model: false # ModelCheckpoint callback handles this
+  log_model: true # ModelCheckpoint callback handles this
 
 # --- Callbacks Configuration ---
 callbacks:
@@ -21,7 +21,7 @@ callbacks:
     mode: "min"
     save_top_k: 1
     #dirpath: "${paths.results}/checkpoints/" wanna let MLflow handle this
-    filename: "epoch_{epoch}-val_loss_{val_loss:.2f}"
+    filename: "best-model"
     auto_insert_metric_name: False
 
   # 2. Early Stopping

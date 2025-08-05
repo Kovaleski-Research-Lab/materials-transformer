@@ -10,6 +10,8 @@ hydra:
 
 # --- Global Project Configuration ---
 project_name: "smiles-transformer"
+mode: test
+mlflow_run_id: f3a167215b884bab810a0c453b12f99d
 version: "1.0.0"
 matmul_precision: "medium"
 
@@ -21,3 +23,4 @@ paths:
   results: "${paths.project_root}/results/transformer"
   nf_data: "${paths.project_root}/data/dataset_155.pt"
   ir_data: "${paths.project_root}/data/IR_v09_df_all_features.parquet"
+  ckpt: null

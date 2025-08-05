@@ -11,33 +11,87 @@ root = pyrootutils.setup_root(
     dotenv=True)
 
 import hydra
-from hydra.utils import instantiate
+from hydra.utils import instantiate, get_class
 from omegaconf import DictConfig, OmegaConf
 import torch
+import mlflow
+import sys
 
 @hydra.main(version_base=None, config_path=str(root / "conf"), config_name="config")
 def main(cfg: DictConfig) -> float:
     
-    print("--- Configuration ---")
-    print(OmegaConf.to_yaml(cfg))
-    print("---------------------")
+    #print("--- Configuration ---")
+    #print(OmegaConf.to_yaml(cfg))
+    #print("---------------------")
     
     torch.set_float32_matmul_precision(cfg.matmul_precision)
+    mlflow.set_tracking_uri(f"{cfg.paths.results}/mlruns")
     
-    # 1. Instantiate associated objects
-    model =instantiate(cfg.model)
+    # manually instantiate the logger
+    logger_cfg = cfg.trainer.logger
+    if cfg.mode in ['resume', 'test'] and cfg.mlflow_run_id is not None:
+        print(f"-- Reopening MLflow run: {cfg.mlflow_run_id} ---")
+        logger = instantiate(logger_cfg, run_id=cfg.mlflow_run_id)
+    else:
+        logger = instantiate(logger_cfg)
+    
+    # Instantiate shared associated objects
+    trainer = instantiate(cfg.trainer, logger=logger)
     datamodule = instantiate(cfg.data)
-    trainer = instantiate(cfg.trainer)
     
-    # auto log all MLflow entities
-    #mlflow.pytorch.autolog(log_models=False)
-
-    # 2. Train the model
-    trainer.fit(model=model, datamodule=datamodule)
+    # fetch the checkpoint
+    ckpt_path_to_load = cfg.paths.ckpt
     
-    # 3. Test the model
-    trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
+    if ckpt_path_to_load is None and cfg.mlflow_run_id is not None:
+        print(f"--- Finding checkpoint for run_id {cfg.mlflow_run_id} ---")
+        try:
+            artifact_path = f"checkpoints/best-model.ckpt"
+            
+            ckpt_path_to_load = mlflow.artifacts.download_artifacts(
+                run_id=cfg.mlflow_run_id,
+                artifact_path=artifact_path,
+                tracking_uri=f"{cfg.paths.results}/mlruns"
+            )
+            print(f"--- Checkpoint found and downloaded to: {ckpt_path_to_load} ---")
+        except Exception as e:
+            print(f"Error downloading artifact: {e}")
+            raise ValueError("Could not automatically find checkpoint")
+    
+    if cfg.mode == 'train':
+        print('--- Running in default training mode ---')
+        model = instantiate(cfg.model)
 
+        # train the model
+        trainer.fit(model=model, datamodule=datamodule)
+    
+        # test the best model from this new run
+        trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
+        
+    elif cfg.mode == 'resume':
+        print(f'--- Resuming training ---')
+        if ckpt_path_to_load is None:
+            raise ValueError("For resuming training, checkpoint must have been found or provided.")
+        model = instantiate(cfg.model)
+        trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_path_to_load)
+        # test with the new best model from resumed run
+        trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
+        
+    elif cfg.mode == 'test':
+        print(f"--- Running in test-only mode ---")
+        if ckpt_path_to_load is None:
+            raise ValueError("For 'test' mode, checkpoint must have been found or provided.")
+        
+        # load the model and test
+        model_class_path = cfg.model._target_ 
+        ModelClass = get_class(model_class_path)
+        model = ModelClass.load_from_checkpoint(checkpoint_path=ckpt_path_to_load)
+        trainer.test(model=model, datamodule=datamodule)
+        
+        return 0.0 # no metric for this case
+        
+    else:
+        raise ValueError(f"Invalid mode '{cfg.mode}.' Choose from 'train', 'resume', or 'test'.")
+        
     # --- Return objective for Optuna ---
     objective_metric_name = cfg.get("objective_metric", "val_loss")
     objective_value = trainer.checkpoint_callback.best_model_score.item()
