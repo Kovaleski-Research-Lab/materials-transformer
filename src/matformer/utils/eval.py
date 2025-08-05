@@ -9,6 +9,8 @@ import os
 from omegaconf import DictConfig
 import mlflow
 from tqdm import tqdm
+from rdkit import Chem
+from rdkit.Chem import Draw
 
 import utils.mapping as mapping
 
@@ -333,8 +335,36 @@ def create_matrix_artifact(
     
     return None
 
-def create_matrix_artifact(
+def create_molecules_artifact(
     eval_df: pd.DataFrame,
     artifacts_dir: str
 ) -> None:
-    pass
+    fig, axes = plt.subplots(5, 2, figsize=(10, 20))
+    
+    true_smiles_list = eval_df['target']
+    pred_smiles_list = eval_df['predictions']
+    
+    for i in range(5):
+        # draw and plot ground truth
+        mol = Chem.MolFromSmiles(true_smiles_list[i])
+        mol_img = Draw.MolToImage(mol, size=(300,300))
+        axes[i, 0].imshow(mol_img)
+        axes[i, 0].axis('off')
+        axes[i, 0].set_title(f"True Molecule {i}\nSMILES: {true_smiles_list[i]}")
+        
+        # prediction
+        mol = Chem.MolFromSmiles(pred_smiles_list[i])
+        mol_img = Draw.MolToImage(mol, size=(300,300))
+        axes[i, 1].imshow(mol_img)
+        axes[i, 1].axis('off')
+        axes[i, 1].set_title(f"Predicted Molecule {i}\nSMILES: {true_smiles_list[i]}")
+        
+    plt.tight_layout()
+
+    # save the artifact
+    plot_path = os.path.join(artifacts_dir, "sample_molecule_viz.pdf")
+    plt.savefig(plot_path)
+    plt.close(fig)
+    print(f"Saved correlation plot artifact to {plot_path}")
+    
+    return None

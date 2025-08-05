@@ -5,15 +5,13 @@ class SMILES_Prediction_Logger(pl.Callback):
         """
         This function is called after every validation epoch.
         """
-        # Ensure we have a validation dataloader
+        # verify exist
         if not trainer.datamodule.val_dataloader():
             return
 
         # 1. Get one batch from the validation set
         val_batch = next(iter(trainer.datamodule.val_dataloader()))
         spectrum, true_tokens = val_batch
-        
-        # Move data to the same device as the model
         spectrum = spectrum.to(pl_module.device)
 
         # 2. Select a single sample from the batch to predict

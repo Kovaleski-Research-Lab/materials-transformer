@@ -5,6 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Python and its package manager
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxrender1 \
     python3.10 \
     python3-pip \
     git \

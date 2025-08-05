@@ -12,7 +12,7 @@ import shutil
 import matplotlib.pyplot as plt
 import math
 
-from utils.eval import create_matrix_artifact
+from utils.eval import create_molecules_artifact
 
 ATOM_MAP = {'C': 0, 'H': 1, 'O': 2, 'N': 3, 'S': 4, 'Cl': 5, 'PAD': 6}
 
@@ -282,7 +282,7 @@ class SmilesTransformer(pl.LightningModule):
                 "target": true_smiles_list, 
                 "predictions": pred_smiles_list
             }
-            # TODO : confusion matrix artifact or something
+            create_molecules_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir)
             
             # Log artifacts to MLflow
             if self.logger:
