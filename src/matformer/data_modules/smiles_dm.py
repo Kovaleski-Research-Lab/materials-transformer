@@ -64,6 +64,7 @@ class SmilesDataModule(LightningDataModule):
         self.idx_to_char = None
         self.pad_token_idx = None
         self.vocab_size = None
+        self.tokenizer = None
         self.dataset = None
         self.train_dataset = None
         self.valid_dataset = None
@@ -75,22 +76,9 @@ class SmilesDataModule(LightningDataModule):
         # read in the parquet file
         df = pd.read_parquet(self.data_path)
 
-        # build the vocab - collect all unique chars
+        # create and store the tokenizer
         all_smiles = df[self.smiles_column].tolist()
-        char_set = set()
-        for smiles in all_smiles:
-            char_set.update(list(smiles))
-            
-        # define special tokens and create the vocab
-        special_tokens = ['<PAD>', '<SOS>', '<EOS>']
-        vocab = sorted(list(char_set)) + special_tokens
-        
-        # create mappings
-        self.idx_to_char = {i: char for i, char in enumerate(vocab)}
-        self.char_to_idx = {char: i for i, char in enumerate(vocab)}
-        self.vocab_size = len(vocab)
-        
-        self.pad_token_idx = self.char_to_idx['<PAD>']
+        self.tokenizer = SMILESTokenizer.from_smiles_list(all_smiles)
         
         # process IR spectra
         X = np.log(np.vstack(df['y'].values) + 1)
@@ -102,8 +90,7 @@ class SmilesDataModule(LightningDataModule):
         eos_token = self.char_to_idx['<EOS>']
         
         for smiles in all_smiles:
-            tokens = [self.char_to_idx[char] for char in smiles]
-            tokenized = [sos_token] + tokens + [eos_token]
+            tokenized = self.tokenizer.encode(smiles)
             
             # pad to max length
             padding_needed = self.max_smiles_len - len(tokenized)
@@ -153,3 +140,48 @@ class SmilesDataModule(LightningDataModule):
             persistent_workers=True,
             collate_fn=graph_collate_fn
         )
+        
+# ----------------------
+# TOKENIZER
+# ----------------------
+
+class SMILESTokenizer:
+    def __init__(self, char_to_idx, idx_to_char):
+        self.char_to_idx = char_to_idx
+        self.idx_to_char = idx_to_char
+        
+        # special indices
+        self.pad_idx = char_to_idx('<PAD>')
+        self.sos_idx = char_to_idx('<SOS>')
+        self.eos_idx = char_to_idx('<EOS>')
+        self.vocab_size = len(char_to_idx)
+        
+    def from_smiles_list(cls, smiles_list):
+        """Factory method to create a tokenizer from a list of SMILES strings."""
+        char_set = set()
+        for smiles in smiles_list:
+            char_set.update(list(smiles))
+
+        special_tokens = ['<PAD>', '<SOS>', '<EOS>']
+        vocab = special_tokens + sorted(list(char_set))
+        
+        idx_to_char = {i: char for i, char in enumerate(vocab)}
+        char_to_idx = {char: i for i, char in enumerate(vocab)}
+        
+        return cls(char_to_idx, idx_to_char)
+        
+    def encode(self, smiles_string):
+        """Converts SMILES string to a list of integer tokens"""
+        tokens = [self.char_to_idx[char] for char in smiles_string]
+        return [self.sos_idx] + tokens + [self.eos_idx]
+    
+    def decode(self, token_list, skip_special_tokens=True):
+        """Converts list of integer tokens back to SMILES string"""
+        chars = []
+        for token in token_list:
+            if token == self.eos_idx and skip_special_tokens:
+                break
+            if skip_special_tokens and token in [self.pad_idx, self.sos_idx]:
+                continue
+            chars.append(self.idx_to_char[token])
+        return "".join(chars)
