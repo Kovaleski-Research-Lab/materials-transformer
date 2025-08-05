@@ -1,12 +1,12 @@
 # Transformer
 
-## Getting started (simple approach)
+## Getting started (simple approach, dev strategy)
 
 1. Install uv
 
-2. Run the command
+2. Run the following command from the project root
 ```
-uv pip sync uv.lock --system --no-cache --require-hashes --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu128
+uv pip sync requirements.txt --system --no-cache --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu128
 ```
 
 3. Activate the virtual environment
