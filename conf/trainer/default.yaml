@@ -9,9 +9,9 @@ log_every_n_steps: 1
 logger:
   _target_: pytorch_lightning.loggers.MLFlowLogger
   experiment_name: ${project_name}
-  run_name: run04
+  run_name: run07-bigheads
   tracking_uri: "file://${paths.results}/mlruns"
-  log_model: true # ModelCheckpoint callback handles this
+  log_model: False # ModelCheckpoint callback handles this
 
 # --- Callbacks Configuration ---
 callbacks:
@@ -20,6 +20,7 @@ callbacks:
     monitor: "val_loss"
     mode: "min"
     save_top_k: 1
+    save_last: True
     #dirpath: "${paths.results}/checkpoints/" wanna let MLflow handle this
     filename: "best-model"
     auto_insert_metric_name: False

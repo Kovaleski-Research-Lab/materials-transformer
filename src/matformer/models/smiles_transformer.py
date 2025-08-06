@@ -183,7 +183,7 @@ class SmilesTransformer(pl.LightningModule):
         loss = self.shared_step(batch, batch_idx)
         # Log the metrics
         self.log("val_loss", loss, 
-                    on_step=False, on_epoch=True)
+                    prog_bar=True, on_step=False, on_epoch=True)
         return loss
     
     @torch.no_grad()

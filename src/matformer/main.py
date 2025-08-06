@@ -15,7 +15,8 @@ from hydra.utils import instantiate, get_class
 from omegaconf import DictConfig, OmegaConf
 import torch
 import mlflow
-import sys
+import os
+import pytorch_lightning as pl
 
 @hydra.main(version_base=None, config_path=str(root / "conf"), config_name="config")
 def main(cfg: DictConfig) -> float:
@@ -56,24 +57,31 @@ def main(cfg: DictConfig) -> float:
         except Exception as e:
             print(f"Error downloading artifact: {e}")
             raise ValueError("Could not automatically find checkpoint")
-    
-    if cfg.mode == 'train':
-        print('--- Running in default training mode ---')
-        model = instantiate(cfg.model)
-
-        # train the model
-        trainer.fit(model=model, datamodule=datamodule)
-    
-        # test the best model from this new run
-        trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
         
-    elif cfg.mode == 'resume':
-        print(f'--- Resuming training ---')
-        if ckpt_path_to_load is None:
-            raise ValueError("For resuming training, checkpoint must have been found or provided.")
+    if cfg.mode == 'train' or cfg.mode == 'resume':
+        # ensure checkpoints are saved as official MLflow artifacts.
+        
+        # Get the active ModelCheckpoint callback from the trainer
+        checkpoint_callback = None
+        for cb in trainer.callbacks:
+            if isinstance(cb, pl.callbacks.ModelCheckpoint):
+                checkpoint_callback = cb
+                break
+        
+        if checkpoint_callback:
+            # The correct artifact path is inside the logger's run directory
+            run = trainer.logger.experiment.get_run(trainer.logger.run_id)
+            artifact_uri = run.info.artifact_uri
+            checkpoint_callback.dirpath = os.path.join(artifact_uri, "checkpoints")
+            #print(f"--- Checkpoints will be saved to MLflow artifact path: {checkpoint_callback.dirpath} ---")
+
+        # Now, proceed with training
         model = instantiate(cfg.model)
-        trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_path_to_load)
-        # test with the new best model from resumed run
+        if cfg.mode == 'train':
+            trainer.fit(model=model, datamodule=datamodule)
+        else: # resume mode
+            trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
+
         trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
         
     elif cfg.mode == 'test':

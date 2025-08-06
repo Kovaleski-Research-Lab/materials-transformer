@@ -356,6 +356,8 @@ def create_molecules_artifact(
         
         # prediction
         mol = Chem.MolFromSmiles(pred_smiles_list[i])
+        if not mol:
+            continue
         mol_img = Draw.MolToImage(mol, size=(300,300))
         axes[i, 1].imshow(mol_img)
         axes[i, 1].axis('off')
