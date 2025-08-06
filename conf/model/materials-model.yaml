@@ -3,13 +3,13 @@ _target_: models.smiles_transformer.SmilesTransformer
 # Parameters
 
 input_dim: 1
-model_dim: 300
-num_heads: 10
+model_dim: 496
+num_heads: 8
 encoder_depth: 4
 decoder_depth: 4
 rows: 80
 cols: 160
-dropout: 0.1
+dropout: 0.05
 target_vocab_size: 26 # 23 unique chars in the dataset + 3 specials
 
 # General Parameters

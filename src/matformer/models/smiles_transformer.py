@@ -105,10 +105,6 @@ class SmilesTransformer(pl.LightningModule):
                              'valid': {'nf_pred': [], 'nf_truth': []}}
         
         # initialize metrics
-        self.train_psnr = PeakSignalNoiseRatio(data_range=1.0)
-        self.train_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
-        self.val_psnr = PeakSignalNoiseRatio(data_range=1.0)
-        self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
         self.test_step_outputs = []
         
     # forward is separated into its distinct components for testing versatility
