@@ -5,4 +5,4 @@ n_cpus: 5
 data_path: ${paths.ir_data}
 val_split: 0.2
 smiles_column: 'smiles'
-max_smiles_len: 30
+max_smiles_len: 83 # longest confirmed to be 82

@@ -11,8 +11,6 @@ import tempfile
 import shutil
 import matplotlib.pyplot as plt
 import math
-from rdkit import Chem
-from rdkit.Chem import Descriptors
 
 from utils.eval import create_molecules_artifact
 
@@ -62,8 +60,7 @@ class SmilesTransformer(pl.LightningModule):
         seq_len: int,
         encoder_depth: int,
         decoder_depth: int,
-        target_vocab_size: int,
-        lambda_mw: float
+        target_vocab_size: int
     ):
         self.input_dim = input_dim
         self.model_dim = model_dim
@@ -78,7 +75,6 @@ class SmilesTransformer(pl.LightningModule):
         self.encoder_depth = encoder_depth
         self.decoder_depth = decoder_depth
         self.target_vocab_size = target_vocab_size
-        self.lambda_mw = lambda_mw
         
         super().__init__()
         self.save_hyperparameters()
@@ -100,15 +96,9 @@ class SmilesTransformer(pl.LightningModule):
         )
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=self.decoder_depth)
         
+        
         # ===== 3. FINAL OUTPUT LAYER =====
         self.output_fc = nn.Linear(model_dim, target_vocab_size)
-        
-        # ===== 4. component for Mol Weight =====
-        self.mw_predictor = nn.Sequential(
-            nn.Linear(model_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
-        )
         
         # store necessary lists for tracking metrics per fold
         self.test_results = {'train': {'nf_pred': [], 'nf_truth': []},
@@ -139,12 +129,12 @@ class SmilesTransformer(pl.LightningModule):
             memory=memory,
             tgt_mask=tgt_mask
         )
-        return self.output_fc(decoder_output), decoder_output
+        return self.output_fc(decoder_output)
         
     def forward(self, src_spectrum, tgt_smiles):
         memory = self.encode(src_spectrum)
-        logits, hidden_states = self.decode(tgt_smiles, memory)
-        return logits, hidden_states
+        logits = self.decode(tgt_smiles, memory)
+        return logits
     
     def configure_optimizers(self):
         optimizer = self.optimizer_cfg(params=self.parameters())
@@ -155,16 +145,6 @@ class SmilesTransformer(pl.LightningModule):
                                "monitor": "val_loss"}
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler_config}
     
-    def calculate_mw_for_batch(self, smiles_batch):
-        """does what it sounds like"""
-        mw_list = []
-        for item in smiles_batch:
-            smiles = self.trainer.datamodule.tokenizer.decode(item, skip_special_tokens=True)
-            mw = Descriptors.ExactMolWt(Chem.MolFromSmiles(smiles))
-            #print(f"smiles and its mw: {smiles} : {mw}")
-            mw_list.append(mw)
-        return torch.tensor(mw_list, device=smiles_batch.device)
-            
     def shared_step(self, batch, batch_idx):
         spectrum, smiles_true = batch
         
@@ -175,28 +155,18 @@ class SmilesTransformer(pl.LightningModule):
         smiles_target = smiles_true[:, 1:]
         
         # get output
-        logits, hidden_states = self.forward(spectrum, smiles_input)
+        logits = self.forward(spectrum, smiles_input)
         
-        # get the pred smiles for loss
-        #smiles_pred = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
+        #print(f"smiles_target: {smiles_target.reshape(-1)}")
+        #print(f"logits: {logits.reshape(-1, logits.shape[-1])}")
 
-        # calculate primary loss
-        loss_ce = F.cross_entropy(
+        # calc loss
+        loss = F.cross_entropy(
             logits.reshape(-1, logits.shape[-1]),
             smiles_target.reshape(-1),
             ignore_index = self.trainer.datamodule.tokenizer.pad_idx
         )
-        
-        # calculate auxiliary mol weight loss
-        sos_hidden_state = hidden_states[:, 0, :]
-        pred_mw = self.mw_predictor(sos_hidden_state).squeeze()
-        true_mw = self.calculate_mw_for_batch(smiles_true)
-        loss_mw = F.mse_loss(pred_mw, true_mw)
-        
-        # return compound loss
-        total_loss = loss_ce + (self.lambda_mw * loss_mw)
-        self.log("mw_loss", loss_mw, prog_bar=True)
-        return total_loss
+        return loss
     
     def training_step(self, batch, batch_idx):
         loss = self.shared_step(batch, batch_idx)
@@ -231,7 +201,7 @@ class SmilesTransformer(pl.LightningModule):
         has_finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         for _ in range(max_len - 1):
             # decode current sequences to get logits for NEXT tokens
-            logits, _ = self.decode(output_tokens, memory)
+            logits = self.decode(output_tokens, memory)
             
             # get last predicted token for each sequence in batch
             next_tokens = logits.argmax(dim=-1)[:, -1] # shape: (batch)

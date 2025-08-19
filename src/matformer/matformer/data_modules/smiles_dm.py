@@ -1,3 +1,7 @@
+# OLD, UPDATE FOR SMILES
+
+
+
 #--------------------------------
 # Import: Basic Python Libraries
 #--------------------------------
@@ -16,7 +20,6 @@ from tqdm import tqdm
 from typing import Dict
 import pandas as pd
 from rdkit import Chem
-from rdkit.Chem import Descriptors
 
 # ----------------------
 # DATAMODULE and DATASET
@@ -51,7 +54,6 @@ class SmilesDataModule(LightningDataModule):
         self.train_dataset = None
         self.valid_dataset = None
         self.test_dataset = None
-        self.mw_dict = {}
         
         super().__init__()
     
