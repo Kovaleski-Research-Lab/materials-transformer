@@ -195,7 +195,7 @@ class SmilesTransformer(pl.LightningModule):
         
         # return compound loss
         total_loss = loss_ce + (self.lambda_mw * loss_mw)
-        self.log("mw_loss", loss_mw, prog_bar=True)
+        #self.log("mw_loss", loss_mw, prog_bar=True)
         return total_loss
     
     def training_step(self, batch, batch_idx):

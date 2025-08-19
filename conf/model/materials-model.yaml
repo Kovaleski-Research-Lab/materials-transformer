@@ -11,7 +11,7 @@ rows: 80
 cols: 160
 dropout: 0.05
 target_vocab_size: 26 # 23 unique chars in the dataset + 3 specials
-lambda_mw: 0.2 # controlling controbution of mol weight loss term
+lambda_mw: 0.0 # controlling controbution of mol weight loss term
 
 # General Parameters
 
