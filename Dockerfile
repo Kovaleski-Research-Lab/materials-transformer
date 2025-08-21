@@ -5,10 +5,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Python and its package manager
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libxrender1 \
-    libxext6 \
     python3.10 \
     python3-pip \
+    libxrender1 \
+    libxext6 \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,11 +19,12 @@ WORKDIR /app
 
 # Copy the configuration and the lock file
 # The lock file now contains the information about the CUDA-enabled torch
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock requirements.txt ./
 
 # Install dependencies using the lock file.
 # uv will read the index configuration from pyproject.toml automatically.
-RUN uv pip sync uv.lock --system --no-cache --require-hashes --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu128
+#RUN uv pip sync uv.lock --system --no-cache --require-hashes --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu128
+RUN uv pip sync requirements.txt --system --no-cache --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu128
 
 # Copy your project source code
 COPY src/ ./src/
