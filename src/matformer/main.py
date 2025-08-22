@@ -80,7 +80,7 @@ def main(cfg: DictConfig) -> float:
         if cfg.mode == 'train':
             trainer.fit(model=model, datamodule=datamodule)
         else: # resume mode
-            trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
+            trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_path_to_load)
 
         trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
         

@@ -11,7 +11,8 @@ rows: 80
 cols: 160
 dropout: 0.05
 target_vocab_size: 26 # 23 unique chars in the dataset + 3 specials
-lambda_mw: 0.0 # controlling controbution of mol weight loss term
+lambda_aux: 0.0 # controlling controbution of mol weight loss term
+lambda_rl: 0.0
 
 # General Parameters
 
@@ -29,5 +30,5 @@ lr_scheduler:
   T_mult: 2
   eta_min: 1.e-5
 
-loss_func: 'bce'
+loss_func: 'bce' # or 'rl' or 'aux'
 seq_len: 500

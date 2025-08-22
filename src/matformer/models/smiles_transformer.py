@@ -63,7 +63,8 @@ class SmilesTransformer(pl.LightningModule):
         encoder_depth: int,
         decoder_depth: int,
         target_vocab_size: int,
-        lambda_mw: float
+        lambda_aux: float,
+        lambda_rl: float
     ):
         self.input_dim = input_dim
         self.model_dim = model_dim
@@ -78,7 +79,8 @@ class SmilesTransformer(pl.LightningModule):
         self.encoder_depth = encoder_depth
         self.decoder_depth = decoder_depth
         self.target_vocab_size = target_vocab_size
-        self.lambda_mw = lambda_mw
+        self.lambda_aux = lambda_aux
+        self.lambda_rl = lambda_rl
         
         super().__init__()
         self.save_hyperparameters()
@@ -187,15 +189,47 @@ class SmilesTransformer(pl.LightningModule):
             ignore_index = self.trainer.datamodule.tokenizer.pad_idx
         )
         
-        # calculate auxiliary mol weight loss
-        sos_hidden_state = hidden_states[:, 0, :]
-        pred_mw = self.mw_predictor(sos_hidden_state).squeeze()
-        true_mw = self.calculate_mw_for_batch(smiles_true)
-        loss_mw = F.mse_loss(pred_mw, true_mw)
+        # calculate RL loss
+        if self.loss_func == 'rl':
+            _, sampled_tokens, sum_log_probs = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
+            sampled_smiles_list = []
+            for smiles_sequence in sampled_tokens:
+                smiles = self.trainer.datamodule.tokenizer.decode(smiles_sequence, skip_special_tokens=True)
+                sampled_smiles_list.append(smiles)
+                
+            # calculate rewards for each string in the batch
+            rewards = []
+            for smiles in sampled_smiles_list:
+                mol = Chem.MolFromSmiles(smiles)
+                if mol is not None:
+                    rewards.append(1.0) # positive reward for valid SMILES
+                else:
+                    rewards.append(-1.0) # negative for invalid SMILES
+                    
+            rewards = torch.tensor(rewards, device=self.device)
+            
+            # for reducing variance
+            baseline = rewards.mean()
+            adjusted_rewards = rewards - baseline
+            
+            # calculate the RL loss (policy gradient)
+            # want to MAXIMIZE reward, so MINIMIZE the negative of this value
+            loss_rl = -torch.mean(adjusted_rewards * sum_log_probs)
+            # combine
+            total_loss = loss_ce + (self.lambda_rl * loss_rl)
         
-        # return compound loss
-        total_loss = loss_ce + (self.lambda_mw * loss_mw)
-        #self.log("mw_loss", loss_mw, prog_bar=True)
+        # calculate auxiliary loss
+        if self.loss_func == 'aux':
+            sos_hidden_state = hidden_states[:, 0, :]
+            pred_mw = self.mw_predictor(sos_hidden_state).squeeze()
+            true_mw = self.calculate_mw_for_batch(smiles_true)
+            loss_mw = F.mse_loss(pred_mw, true_mw)
+            self.log("mw_loss", loss_mw, prog_bar=True, on_step=False, on_epoch=True)
+            total_loss = loss_ce + (self.lambda_aux * loss_mw)
+            
+        else:
+            total_loss = loss_ce
+            
         return total_loss
     
     def training_step(self, batch, batch_idx):
@@ -228,6 +262,16 @@ class SmilesTransformer(pl.LightningModule):
             device=self.device
         )
         
+        # rl stuff
+        tokens_rl = torch.full(
+            (batch_size, 1),
+            tokenizer.sos_idx,
+            dtype=torch.long,
+            device=self.device
+        )
+        # log probabilities of actions taken
+        sum_log_probs = torch.zeros(batch_size, device=self.device)
+        
         has_finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         for _ in range(max_len - 1):
             # decode current sequences to get logits for NEXT tokens
@@ -239,6 +283,17 @@ class SmilesTransformer(pl.LightningModule):
             # Append the prediction to our output
             output_tokens = torch.cat([output_tokens, next_tokens.unsqueeze(1)], dim=1)
             
+            # convert logits to probs and sample
+            probs = F.softmax(logits[:, -1, :], dim=-1)
+            sampled_token = torch.multinomial(probs, num_samples=1)
+            
+            # get log prob of the just-sampled token
+            log_prob = F.log_softmax(logits[:, -1, :], dim=-1)
+            sum_log_probs += log_prob.gather(1, sampled_token).squeeze()
+            
+            # append sampled token to the sequence for the next iteration
+            tokens_rl = torch.cat([tokens_rl, sampled_token], dim=1)
+            
             # update tracker when sequence generates <EOS>
             has_finished = has_finished | (next_tokens == tokenizer.eos_idx)
 
@@ -246,13 +301,13 @@ class SmilesTransformer(pl.LightningModule):
             if has_finished.all():
                 break
                 
-        return output_tokens
+        return output_tokens, tokens_rl, sum_log_probs
     
     def test_step(self, batch, batch_idx):
         spectrum, smiles_true = batch
 
         # generate an output string
-        smiles_pred = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
+        smiles_pred, _, _ = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
         
         output = {
             "pred_tokens": smiles_pred.detach().cpu(),
