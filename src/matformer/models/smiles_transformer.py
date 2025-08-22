@@ -64,7 +64,9 @@ class SmilesTransformer(pl.LightningModule):
         decoder_depth: int,
         target_vocab_size: int,
         lambda_aux: float,
-        lambda_rl: float
+        lambda_rl: float,
+        testing_method: str,
+        testing_sample_num: int
     ):
         self.input_dim = input_dim
         self.model_dim = model_dim
@@ -81,6 +83,8 @@ class SmilesTransformer(pl.LightningModule):
         self.target_vocab_size = target_vocab_size
         self.lambda_aux = lambda_aux
         self.lambda_rl = lambda_rl
+        self.testing_method = testing_method
+        self.testing_sample_num = testing_sample_num
         
         super().__init__()
         self.save_hyperparameters()
@@ -178,9 +182,6 @@ class SmilesTransformer(pl.LightningModule):
         
         # get output
         logits, hidden_states = self.forward(spectrum, smiles_input)
-        
-        # get the pred smiles for loss
-        #smiles_pred = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
 
         # calculate primary loss
         loss_ce = F.cross_entropy(
@@ -191,7 +192,7 @@ class SmilesTransformer(pl.LightningModule):
         
         # calculate RL loss
         if self.loss_func == 'rl':
-            _, sampled_tokens, sum_log_probs = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
+            sampled_tokens, sum_log_probs = self.get_smiles_preds(spectrum, method="sampling")
             sampled_smiles_list = []
             for smiles_sequence in sampled_tokens:
                 smiles = self.trainer.datamodule.tokenizer.decode(smiles_sequence, skip_special_tokens=True)
@@ -247,25 +248,31 @@ class SmilesTransformer(pl.LightningModule):
         return loss
     
     @torch.no_grad()
-    def generate_smiles(self, spectrum, tokenizer, max_len=100):
+    def get_smiles_preds(self, spectrum, max_len=100, method="deterministic"):
+        """This function utilizes the trained model to produce outputs and decode them into interpretable
+        SMILES strings for a given batch of inputs.
+
+        Parameters
+        ----------
+            spectrum (torch.tensor): The input IR spectrum samples passed to the model.
+            max_len (int, optional): maximum SMILES string length to predict. Defaults to 100.
+            method (str, optional): prediction strategy. Defaults to "deterministic", alternative is "sampling"
+
+        Returns
+        -------
+            output_tokens (torch.tensor): (batch_size, num_preds) SMILES string predictions
+        """
         self.eval()
         
         # Encode the spectrum once
         memory = self.encode(spectrum)
         
         # Start with the <SOS> token for each item in batch
+        tokenizer = self.trainer.datamodule.tokenizer
         batch_size = spectrum.shape[0]
         output_tokens = torch.full(
             (batch_size, 1),
             fill_value=tokenizer.sos_idx,
-            dtype=torch.long,
-            device=self.device
-        )
-        
-        # rl stuff
-        tokens_rl = torch.full(
-            (batch_size, 1),
-            tokenizer.sos_idx,
             dtype=torch.long,
             device=self.device
         )
@@ -277,22 +284,20 @@ class SmilesTransformer(pl.LightningModule):
             # decode current sequences to get logits for NEXT tokens
             logits, _ = self.decode(output_tokens, memory)
             
-            # get last predicted token for each sequence in batch
-            next_tokens = logits.argmax(dim=-1)[:, -1] # shape: (batch)
-            
+            if method == "deterministic":
+                # for the next position, get the most likely token
+                next_tokens = logits.argmax(dim=-1)[:, -1] # shape: (batch)
+                
+            elif method == "sampling": # sample from a distr instead of just taking the best
+                next_token_logits = logits[:, -1, :] # logits for very last token
+                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                next_tokens = torch.multinomial(probs, num_samples=1) # sample
+                # get log prob of the just-sampled token
+                log_prob = F.log_softmax(logits[:, -1, :], dim=-1)
+                sum_log_probs += log_prob.gather(1, next_tokens).squeeze()
+                
             # Append the prediction to our output
-            output_tokens = torch.cat([output_tokens, next_tokens.unsqueeze(1)], dim=1)
-            
-            # convert logits to probs and sample
-            probs = F.softmax(logits[:, -1, :], dim=-1)
-            sampled_token = torch.multinomial(probs, num_samples=1)
-            
-            # get log prob of the just-sampled token
-            log_prob = F.log_softmax(logits[:, -1, :], dim=-1)
-            sum_log_probs += log_prob.gather(1, sampled_token).squeeze()
-            
-            # append sampled token to the sequence for the next iteration
-            tokens_rl = torch.cat([tokens_rl, sampled_token], dim=1)
+            output_tokens = torch.cat([output_tokens, next_tokens], dim=1)
             
             # update tracker when sequence generates <EOS>
             has_finished = has_finished | (next_tokens == tokenizer.eos_idx)
@@ -301,16 +306,24 @@ class SmilesTransformer(pl.LightningModule):
             if has_finished.all():
                 break
                 
-        return output_tokens, tokens_rl, sum_log_probs
+        return output_tokens, sum_log_probs
     
     def test_step(self, batch, batch_idx):
         spectrum, smiles_true = batch
 
-        # generate an output string
-        smiles_pred, _, _ = self.generate_smiles(spectrum, self.trainer.datamodule.tokenizer)
-        
+        if self.testing_method == "determinsitic": # getting the most likely output
+            smiles_pred, _ = self.get_smiles_preds(spectrum, method=self.testing_method)
+            smiles_pred = smiles_pred.detach().cpu()
+            
+        elif self.testing_method == "sampling": # sampling a range of outputs
+            smiles_pred = []
+            for _ in range(self.testing_sample_num):
+                smiles_pred_item, _ = self.get_smiles_preds(spectrum, method=self.testing_method)
+                smiles_pred_item = smiles_pred_item.detach().cpu()
+                smiles_pred.append(smiles_pred_item)
+                
         output = {
-            "pred_tokens": smiles_pred.detach().cpu(),
+            "pred_tokens": smiles_pred,
             "true_tokens": smiles_true.detach().cpu()
         }
         self.test_step_outputs.append(output)
@@ -335,11 +348,19 @@ class SmilesTransformer(pl.LightningModule):
                 true_smiles = tokenizer.decode(true_token_sequence, skip_special_tokens=True)
                 true_smiles_list.append(true_smiles)
             
-            for pred_token_sequence in output['pred_tokens']:
-                #print(pred_token_sequence)
-                pred_smiles = tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
-                pred_smiles_list.append(pred_smiles)
-        
+            if self.testing_method == "deterministic": # just a single one to decode per
+                for pred_token_sequence in output['pred_tokens']:
+                    #print(pred_token_sequence)
+                    pred_smiles = tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
+                    pred_smiles_list.append(pred_smiles)
+            elif self.testing_method == "sampling": # we have multiple preds per
+                for pred_strings_list in output['pred_tokens']:
+                    preds = []
+                    for pred_token_sequence in pred_strings_list:
+                        pred_smiles = tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
+                        preds.append(pred_smiles)
+                    pred_smiles_list.append(preds)
+                        
         # Free memory
         self.test_step_outputs.clear()
         
@@ -347,11 +368,17 @@ class SmilesTransformer(pl.LightningModule):
         print("--- Example Test Predictions ---")
         for i in range(min(5, len(true_smiles_list))):
             print(f"True     : {true_smiles_list[i]}")
-            print(f"Predicted: {pred_smiles_list[i]}")
+            if self.testing_method == "deterministic":
+                print(f"Predicted: {pred_smiles_list[i]}")
+            elif self.testing_method == "sampling":
+                print(f"Predicted: {pred_smiles_list[i][0]}")
             print("-" * 20)
             
         # --- Calculate and Log Metrics ---
-        exact_matches = sum(1 for true, pred in zip(true_smiles_list, pred_smiles_list) if true == pred)
+        if self.testing_method == "deterministic":
+            exact_matches = sum(1 for true, pred in zip(true_smiles_list, pred_smiles_list) if true == pred)
+        elif self.testing_method == "sampling":
+            exact_matches = sum(1 for true, preds in zip(true_smiles_list, pred_smiles_list) if true in preds)
         exact_match_accuracy = exact_matches / len(true_smiles_list)
         
         self.log("test_exact_match_accuracy", exact_match_accuracy)

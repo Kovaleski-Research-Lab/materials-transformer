@@ -343,6 +343,10 @@ def create_molecules_artifact(
     
     true_smiles_list = eval_df['target']
     pred_smiles_list = eval_df['predictions']
+    # check if we have multiple preds for each
+    if any(isinstance(el, list) for el in pred_smiles_list):
+        # we'll just take the first then
+        pred_smiles_list = [item[0] for item in pred_smiles_list]
     
     for i in range(5):
         # draw and plot ground truth
