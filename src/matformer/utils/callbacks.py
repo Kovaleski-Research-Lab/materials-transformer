@@ -20,7 +20,7 @@ class SMILES_Prediction_Logger(pl.Callback):
         sample_true_tokens = true_tokens[0]
 
         # 3. Use the model's generation method to get the prediction
-        predicted_tokens, _, _ = pl_module.get_smiles_preds(sample_spectrum)
+        predicted_tokens, _ = pl_module.get_smiles_preds(sample_spectrum)
 
         # 4. Decode both sequences back into strings
         tokenizer = trainer.datamodule.tokenizer

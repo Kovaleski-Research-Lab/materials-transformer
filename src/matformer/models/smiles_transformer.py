@@ -287,6 +287,8 @@ class SmilesTransformer(pl.LightningModule):
             if method == "deterministic":
                 # for the next position, get the most likely token
                 next_tokens = logits.argmax(dim=-1)[:, -1] # shape: (batch)
+                # Append the prediction to our output
+                output_tokens = torch.cat([output_tokens, next_tokens.unsqueeze(1)], dim=1)
                 
             elif method == "sampling": # sample from a distr instead of just taking the best
                 next_token_logits = logits[:, -1, :] # logits for very last token
@@ -296,8 +298,8 @@ class SmilesTransformer(pl.LightningModule):
                 log_prob = F.log_softmax(logits[:, -1, :], dim=-1)
                 sum_log_probs += log_prob.gather(1, next_tokens).squeeze()
                 
-            # Append the prediction to our output
-            output_tokens = torch.cat([output_tokens, next_tokens], dim=1)
+                # Append the prediction to our output
+                output_tokens = torch.cat([output_tokens, next_tokens], dim=1)
             
             # update tracker when sequence generates <EOS>
             has_finished = has_finished | (next_tokens == tokenizer.eos_idx)
@@ -377,11 +379,36 @@ class SmilesTransformer(pl.LightningModule):
         # --- Calculate and Log Metrics ---
         if self.testing_method == "deterministic":
             exact_matches = sum(1 for true, pred in zip(true_smiles_list, pred_smiles_list) if true == pred)
+            exact_match_accuracy = exact_matches / len(true_smiles_list)
+            self.log("test_top_1_accuracy", exact_match_accuracy)
         elif self.testing_method == "sampling":
-            exact_matches = sum(1 for true, preds in zip(true_smiles_list, pred_smiles_list) if true in preds)
-        exact_match_accuracy = exact_matches / len(true_smiles_list)
-        
-        self.log("test_exact_match_accuracy", exact_match_accuracy)
+            top_1_matches = 0
+            top_5_matches = 0
+            top_10_matches = 0
+
+            for true_smiles, pred_list in zip(true_smiles_list, pred_smiles_list):
+                # check for Top-1 match
+                if true_smiles == pred_list[0]:
+                    top_1_matches += 1
+                    top_5_matches += 1  # a top-1 match is also a top-5 and top-10 match
+                    top_10_matches += 1
+                    continue # move to the next true_smiles
+
+                # check for Top-5 match
+                if true_smiles in pred_list[0:5]:
+                    top_5_matches += 1
+                    top_10_matches += 1 # a top-5 match is also a top-10 match
+                    continue
+
+                # check for Top-10 match (last chance! goooo)
+                if true_smiles in pred_list:
+                    top_10_matches += 1
+            
+            # calculate and log accuracies
+            total_count = len(true_smiles_list)
+            self.log("test_top_1_accuracy", top_1_matches / total_count)
+            self.log("test_top_5_accuracy", top_5_matches / total_count)
+            self.log("test_top_10_accuracy", top_10_matches / total_count)
         
         temp_dir = tempfile.mkdtemp()
         try:

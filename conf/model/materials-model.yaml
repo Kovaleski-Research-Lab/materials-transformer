@@ -31,6 +31,6 @@ lr_scheduler:
   eta_min: 1.e-5
 
 loss_func: 'bce' # or 'rl' or 'aux'
-testing_method: 'deterministic' # or 'sampling'
+testing_method: 'sampling' # or 'deterministic'
 testing_sample_num: 10
 seq_len: 500
