@@ -31,6 +31,6 @@ lr_scheduler:
   eta_min: 1.e-5
 
 loss_func: 'bce' # or 'rl' or 'aux'
-testing_method: 'sampling' # or 'deterministic'
-testing_sample_num: 10
+testing_method: 'beam' # or 'deterministic' or 'sampling'
+testing_sample_num: 10 # doubles as beam width param for beam search
 seq_len: 500

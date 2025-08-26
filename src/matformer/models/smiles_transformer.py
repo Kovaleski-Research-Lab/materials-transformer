@@ -263,13 +263,22 @@ class SmilesTransformer(pl.LightningModule):
             output_tokens (torch.tensor): (batch_size, num_preds) SMILES string predictions
         """
         self.eval()
+    
+        # specifics
+        tokenizer = self.trainer.datamodule.tokenizer
+        batch_size = spectrum.shape[0]
         
         # Encode the spectrum once
         memory = self.encode(spectrum)
         
+        # first, check if the testing method is beam search
+        if method == "beam":
+            # perform beam search on the sequence
+            ranked_sequences = self.beam_search_batch(memory, tokenizer) 
+            # result is sorted predictions for the whole batch
+            return ranked_sequences, None 
+                    
         # Start with the <SOS> token for each item in batch
-        tokenizer = self.trainer.datamodule.tokenizer
-        batch_size = spectrum.shape[0]
         output_tokens = torch.full(
             (batch_size, 1),
             fill_value=tokenizer.sos_idx,
@@ -310,10 +319,96 @@ class SmilesTransformer(pl.LightningModule):
                 
         return output_tokens, sum_log_probs
     
+    def beam_search_batch(self, memory, tokenizer, max_len=100):
+        """This function implements beam search for inference with the model at test time on a batch of inputs
+
+        Parameters
+        ----------
+            memory (torch.tensor): The encoded spectrum input
+            tokenizer: Datamodule tokenizer class with various tools
+            max_len (int, optional): maximum SMILES string length to predict. Defaults to 100.
+
+        Returns
+        -------
+            final_sequences (torch.tensor): final ranked list of predictions
+        """
+        batch_size = memory.shape[0]
+        beam_width = self.testing_sample_num
+        
+        sequences = torch.full(
+            (batch_size, 1),
+            fill_value=tokenizer.sos_idx,
+            dtype=torch.long,
+            device=self.device
+        )        
+        
+        # initial scores -> ultimate shape: [batch_size, beam_width]
+        top_k_scores = torch.zeros(batch_size, 1, device=self.device)
+        
+        # for tracking finished beams -> shape: [batch_size, beam_width]
+        completed_beams = torch.zeros(batch_size, beam_width, dtype=torch.bool, device=self.device)
+        
+        for step in range(max_len - 1):
+            # on the first step we're just looking at one beam per batch item
+            num_active_beams = sequences.shape[0]
+            
+            # expand memory to match active beam count
+            # Shape: [num_active_beams, memory_seq_len, model_dim]
+            expanded_memory = memory.repeat_interleave(num_active_beams // batch_size, dim=0)
+            
+            # decode sequences
+            logits, _ = self.decode(sequences, expanded_memory)
+            log_probs = F.log_softmax(logits[:, -1, :], dim=-1) # [num_active_beams, target_vocab_size]
+            
+            # calculate candidate scores -> add current beam scores to the next token log probs
+            # shape: [batch_size, k, vocab_size] -> [batch_size, k * vocab_size]
+            if step == 0:
+                # on the first step each of the batch_size items expands to k candidates
+                candidate_scores = top_k_scores.unsqueeze(2) + log_probs.view(batch_size, 1, self.target_vocab_size)
+            else:
+                candidate_scores = top_k_scores.unsqueeze(2) + log_probs.view(batch_size, beam_width, self.target_vocab_size)
+                
+            candidate_scores = candidate_scores.view(batch_size, -1)
+            
+            # prune the candidates
+            # selecting the top k scores from 'k * vocab_size' candidates for each batch item
+            top_k_scores, top_k_indices = torch.topk(candidate_scores, beam_width, dim=-1)
+            
+            # decode indices to find parent beams and new tokens
+            beam_indices = top_k_indices // self.target_vocab_size # which parent did it come from?
+            token_indices = top_k_indices % self.target_vocab_size # which new token was chosen?
+            
+            # rebuild the beams
+            if step == 0:
+                base_indices = torch.arange(batch_size, device=self.device) * 1 # starts at 1 beam per item
+            else:
+                base_indices = torch.arange(batch_size, device=self.device) * beam_width
+                
+            global_beam_indices = base_indices.unsqueeze(1) + beam_indices
+            
+            # gather the parent sequences and append the new tokens
+            sequences = torch.cat([
+                sequences.index_select(0, global_beam_indices.view(-1)),
+                token_indices.view(-1, 1)
+            ], dim=1)
+
+            # handle finished beams
+            eos_generated = (token_indices == tokenizer.eos_idx)
+            completed_beams = completed_beams.gather(1, beam_indices) | eos_generated
+            
+            # set the score of completed beams to a very low number to ensure they aren't selected again
+            top_k_scores[completed_beams] = -float('inf')
+            
+            if completed_beams.all():
+                break
+            
+        # final selection -> shape: [batch_size, k, seq_len]
+        return sequences.view(batch_size, beam_width, -1)
+    
     def test_step(self, batch, batch_idx):
         spectrum, smiles_true = batch
 
-        if self.testing_method == "determinsitic": # getting the most likely output
+        if self.testing_method in ["determinsitic", "beam"]:
             smiles_pred, _ = self.get_smiles_preds(spectrum, method=self.testing_method)
             smiles_pred = smiles_pred.detach().cpu()
             
@@ -323,7 +418,7 @@ class SmilesTransformer(pl.LightningModule):
                 smiles_pred_item, _ = self.get_smiles_preds(spectrum, method=self.testing_method)
                 smiles_pred_item = smiles_pred_item.detach().cpu()
                 smiles_pred.append(smiles_pred_item)
-                
+                  
         output = {
             "pred_tokens": smiles_pred,
             "true_tokens": smiles_true.detach().cpu()
