@@ -450,14 +450,13 @@ class SmilesTransformer(pl.LightningModule):
                     #print(pred_token_sequence)
                     pred_smiles = tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
                     pred_smiles_list.append(pred_smiles)
-            elif self.testing_method == "sampling": # we have multiple preds per
-                for pred_strings_list in output['pred_tokens']:
-                    preds = []
-                    for pred_token_sequence in pred_strings_list:
-                        pred_smiles = tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
-                        preds.append(pred_smiles)
-                    pred_smiles_list.append(preds)
-                        
+            elif self.testing_method in ["sampling", "beam"]: # we have multiple preds per
+                for pred_group in output['pred_tokens']: # [k, seq_len]
+                    decoded_preds = [tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
+                                     for pred_token_sequence in pred_group]
+                    # append list of k decoded strings to the master list
+                    pred_smiles_list.append(decoded_preds)
+                
         # Free memory
         self.test_step_outputs.clear()
         
@@ -476,7 +475,7 @@ class SmilesTransformer(pl.LightningModule):
             exact_matches = sum(1 for true, pred in zip(true_smiles_list, pred_smiles_list) if true == pred)
             exact_match_accuracy = exact_matches / len(true_smiles_list)
             self.log("test_top_1_accuracy", exact_match_accuracy)
-        elif self.testing_method == "sampling":
+        elif self.testing_method in ["sampling", "beam"]:
             top_1_matches = 0
             top_5_matches = 0
             top_10_matches = 0
