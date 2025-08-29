@@ -347,7 +347,7 @@ class SmilesTransformer(pl.LightningModule):
         
         # for tracking finished beams -> shape: [batch_size, beam_width]
         completed_beams = torch.zeros(batch_size, beam_width, dtype=torch.bool, device=self.device)
-        
+
         for step in range(max_len - 1):
             # on the first step we're just looking at one beam per batch item
             num_active_beams = sequences.shape[0]
@@ -391,20 +391,43 @@ class SmilesTransformer(pl.LightningModule):
                 sequences.index_select(0, global_beam_indices.view(-1)),
                 token_indices.view(-1, 1)
             ], dim=1)
-
-            # handle finished beams
-            eos_generated = (token_indices == tokenizer.eos_idx)
-            completed_beams = completed_beams.gather(1, beam_indices) | eos_generated
             
-            # set the score of completed beams to a very low number to ensure they aren't selected again
-            top_k_scores[completed_beams] = -float('inf')
+            # update the tracker for finished beams
+            eos_generated = (token_indices == tokenizer.eos_idx)
+            if step == 0:
+                completed_beams = eos_generated
+            else:
+                # Propagate the "finished" status from the parent beam
+                completed_beams = completed_beams.gather(1, beam_indices) | eos_generated
             
             if completed_beams.all():
                 break
+                
+        # calculate the length of each sequence
+        eos_positions = (sequences == tokenizer.eos_idx).int()
+        sequence_lengths = eos_positions.argmax(dim=1)
+        sequence_lengths[sequence_lengths == 0] = max_len
+        sequence_lengths = sequence_lengths.float() + 1.0 # adding 1 for the token itself
+        
+        # normalize scores by the sequence length
+        alpha = 0.7
+        length_penalty = ((5.0 + sequence_lengths) / 6.0) ** alpha
+        normalized_scores = top_k_scores / length_penalty.view(batch_size, beam_width)
+        
+        # find top k beams based on the new normalized scores
+        _, final_indices = torch.topk(normalized_scores, beam_width, dim=-1)
+        
+        # gather the final winning sequences
+        # create a global index again for the final selection
+        final_base_indices = torch.arange(batch_size, device=self.device) * beam_width
+        final_global_indices = final_base_indices.unsqueeze(1) + final_indices
+        
+        final_sequences = sequences.index_select(0, final_global_indices.view(-1))
+        
+        # Reshape to the desired output format
+        return final_sequences.view(batch_size, beam_width, -1)
+        
             
-        # final selection -> shape: [batch_size, k, seq_len]
-        return sequences.view(batch_size, beam_width, -1)
-    
     def test_step(self, batch, batch_idx):
         spectrum, smiles_true = batch
 
@@ -466,8 +489,12 @@ class SmilesTransformer(pl.LightningModule):
             print(f"True     : {true_smiles_list[i]}")
             if self.testing_method == "deterministic":
                 print(f"Predicted: {pred_smiles_list[i]}")
-            elif self.testing_method == "sampling":
-                print(f"Predicted: {pred_smiles_list[i][0]}")
+            elif self.testing_method in ["sampling", "beam"]:
+                print(f"Predicted 1: {pred_smiles_list[i][0]}")
+                print(f"Predicted 2: {pred_smiles_list[i][1]}")
+                print(f"Predicted 3: {pred_smiles_list[i][2]}")
+                print(f"Predicted 4: {pred_smiles_list[i][3]}")
+                print(f"Predicted 5: {pred_smiles_list[i][4]}")
             print("-" * 20)
             
         # --- Calculate and Log Metrics ---
