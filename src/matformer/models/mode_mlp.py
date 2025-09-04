@@ -1,8 +1,6 @@
-from io import BytesIO
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 import numpy as np
 from typing import Any

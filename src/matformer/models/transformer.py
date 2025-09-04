@@ -668,7 +668,7 @@ class NewWaveTransformer(pl.LightningModule):
             create_flipbook_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=0)
             
             mlflow_client.log_artifacts(run_id, temp_dir, artifact_path="evaluation_plots")
-            print(f"--- Artifacts logged successfully to the corresponding run folder. ---")
+            print("--- Artifacts logged successfully to the corresponding run folder. ---")
 
         finally:
             shutil.rmtree(temp_dir)

@@ -1,15 +1,10 @@
-from io import BytesIO
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
-from torch_geometric.nn import TransformerConv
-import numpy as np
 from typing import Any
 import tempfile
 import shutil
-import matplotlib.pyplot as plt
 import math
 from rdkit import Chem
 from rdkit.Chem import Descriptors

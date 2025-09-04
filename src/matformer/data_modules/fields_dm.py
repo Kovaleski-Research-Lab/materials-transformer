@@ -1,19 +1,10 @@
 #--------------------------------
 # Import: Basic Python Libraries
 #--------------------------------
-import itertools
-import os
-import sys
 import torch
-import logging
 import numpy as np
-from typing import Optional
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader, Subset
-import pickle
-import torch
-from tqdm import tqdm
-from typing import Dict
 
 # ----------------------
 # DATAMODULE and DATASET
@@ -135,7 +126,7 @@ class NFDataModule(LightningDataModule):
                     
                 else:
                     # many to one, one to one not implemented
-                    raise NotImplementedError(f'Specified recurrent input-output mode is not implemented.')
+                    raise NotImplementedError('Specified recurrent input-output mode is not implemented.')
                 
                 # rearrange dims and add to lists
                 sample = sample.permute(order) # [1, 2, xdim, ydim]
@@ -160,7 +151,7 @@ class NFDataModule(LightningDataModule):
                     label = full_sequence[:, :, :, 1:self.seq_len+1]
                     
                 else:
-                    raise NotImplementedError(f'Specified recurrent input-output mode is not implemented.')
+                    raise NotImplementedError('Specified recurrent input-output mode is not implemented.')
                     
                 sample = sample.permute(order)
                 label = label.permute(order)
@@ -169,7 +160,7 @@ class NFDataModule(LightningDataModule):
             
             else:
                 # no other spacing modes are implemented
-                raise NotImplementedError(f'Specified recurrent dataloading confuration is not implemented.')
+                raise NotImplementedError('Specified recurrent dataloading confuration is not implemented.')
             
         return NF_Dataset(all_samples, all_labels)
     

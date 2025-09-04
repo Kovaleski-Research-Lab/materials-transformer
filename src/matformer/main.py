@@ -12,7 +12,7 @@ root = pyrootutils.setup_root(
 
 import hydra
 from hydra.utils import instantiate, get_class
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import torch
 import mlflow
 import os
@@ -46,7 +46,7 @@ def main(cfg: DictConfig) -> float:
     if ckpt_path_to_load is None and cfg.mlflow_run_id is not None:
         print(f"--- Finding checkpoint for run_id {cfg.mlflow_run_id} ---")
         try:
-            artifact_path = f"checkpoints/best-model.ckpt"
+            artifact_path = "checkpoints/best-model.ckpt"
             
             ckpt_path_to_load = mlflow.artifacts.download_artifacts(
                 run_id=cfg.mlflow_run_id,
@@ -85,7 +85,7 @@ def main(cfg: DictConfig) -> float:
         trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
         
     elif cfg.mode == 'test':
-        print(f"--- Running in test-only mode ---")
+        print("--- Running in test-only mode ---")
         if ckpt_path_to_load is None:
             raise ValueError("For 'test' mode, checkpoint must have been found or provided.")
         
