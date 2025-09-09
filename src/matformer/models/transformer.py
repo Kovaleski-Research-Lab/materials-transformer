@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 
 from utils.eval import create_dft_plot_artifact, create_correlation_plot_artifact, create_flipbook_artifact
 from utils.fourier import FNetEncoderLayer, FNOTransformerLayer
+from utils.custom_loss import K_losses
 
 # helper function(s)
 def get_padding_2d(input_shape, patch_size):
@@ -31,11 +32,10 @@ class NewWaveTransformer(pl.LightningModule):
         depth: int,
         num_heads: int,
         mlp_ratio: float,
-        use_diff_loss: bool,
         mixing: str,
         num_blocks: int,
-        lambda_diff: float,
         dropout: float,
+        mcl_params: dict,
         # relevant hyperparameters 
         optimizer: Any,
         lr_scheduler: Any,
@@ -50,9 +50,8 @@ class NewWaveTransformer(pl.LightningModule):
         self.mlp_ratio = mlp_ratio
         self.mixing = mixing
         self.num_blocks = num_blocks
-        self.use_diff_loss = use_diff_loss
-        self.lambda_diff = lambda_diff
         self.dropout = dropout
+        self.mcl_params = mcl_params
         self.optimizer_cfg = optimizer
         self.scheduler_cfg = lr_scheduler
         self.near_field_dim = near_field_dim
@@ -384,6 +383,42 @@ class NewWaveTransformer(pl.LightningModule):
             preds, labels = preds.unsqueeze(1), labels.unsqueeze(1)  # channel dim
             fn = PeakSignalNoiseRatio(data_range=1.0).to(self._device)
             loss = fn(preds, labels)
+            
+        elif choice == 'gdl':
+            preds_reshaped = preds.contiguous().view(B * T, C, H, W)
+            labels_reshaped = labels.contiguous().view(B * T, C, H, W)
+
+            # Gradient Difference Loss
+            input_grad_v = preds_reshaped.diff(dim=-2) # Height dim
+            target_grad_v = labels_reshaped.diff(dim=-2)
+            input_grad_h = preds_reshaped.diff(dim=-1) # width dim
+            target_grad_h = labels_reshaped.diff(dim=-1)
+            
+            # compute squared differences of the gradients
+            loss_v = (input_grad_v - target_grad_v)**2
+            loss_h = (input_grad_h - target_grad_h)**2
+            
+            # loss is the mean of all pixel-wise gradient differences
+            loss = loss_v.mean() + loss_h.mean()
+
+        elif choice == 'kspace': # the multi-param complex loss term chiefly controlled by mcl_params
+            preds_reshaped = preds.view(B*T, C, H, W)
+            labels_reshaped = labels.view(B*T, C, H, W)
+
+            # convert complex tensors [B*T, H, W]
+            pred_cplx = torch.complex(preds_reshaped[:, 0, :, :], preds_reshaped[:, 1, :, :])
+            label_cplx = torch.complex(labels_reshaped[:, 0, :, :], labels_reshaped[:, 1, :, :])
+            
+            # commpute k-space loss terms
+            loss_obj = K_losses(label_cplx, pred_cplx, num_bins=100)
+            kMag = loss_obj.kMag(option='log')
+            kPhase = loss_obj.kPhase(option='mag_weight')
+            kRadial = loss_obj.kRadial()
+            kAngular = loss_obj.kAngular()
+            
+            # compute the final compound loss
+            loss = (self.mcl_params['alpha'] * kMag + self.mcl_params['beta'] * kPhase +
+                            self.mcl_params['gamma'] * kRadial + self.mcl_params['delta'] * kAngular)
 
         else:
             raise ValueError(f"Unsupported loss function: {choice}")
@@ -392,46 +427,27 @@ class NewWaveTransformer(pl.LightningModule):
     
     def objective(self, preds, labels):
         """
-        objective loss calculation for the transformer. Differs from other implementations in the
-        inclusion of an optional difference loss term for temporal dynamics.
+        objective loss calculation for the transformer.
         """
-        use_diff_loss = self.use_diff_loss
-        lambda_diff = self.lambda_diff
+        # construct multi-criteria loss if requested
+        if self.loss_func == "multi":
+            mse_loss = self.compute_loss(preds, labels, choice='mse')
+            gdl_loss = self.compute_loss(preds, labels, choice='gdl')
+            total_loss = mse_loss + self.mcl_params['alpha'] * gdl_loss
+            
+            return {"loss": total_loss, "mse": mse_loss, "gdl": gdl_loss}
+        
+        if self.loss_func == "kspace":
+            mse_loss = self.compute_loss(preds, labels, choice='mse')
+            k_loss = self.compute_loss(preds, labels, choice='kspace')
+            total_loss = mse_loss + k_loss
+            
+            return {"loss": total_loss, "mse": mse_loss, "kspace": k_loss}
 
-        # --- 1. Calculate the base loss ---
-        base_loss = self.compute_loss(preds, labels, choice=self.loss_func)
-        total_loss = base_loss
-
-        # --- 2. Calculate the difference loss (if enabled) ---
-        if use_diff_loss and preds.shape[1] > 1: # sequence length needs to be greater than 1
-            print("[DEBUG] Using diff loss")
-            diff_loss = torch.tensor(0.0, device=preds.device, requires_grad=True) # Initialize as zero tensor on correct device
-            # Calculate differences between consecutive time steps
-            # preds shape: (B, T, C, H, W)
-            pred_diff = preds[:, 1:, ...] - preds[:, :-1, ...]  # Shape: (B, T-1, C, H, W)
-            label_diff = labels[:, 1:, ...] - labels[:, :-1, ...] # Shape: (B, T-1, C, H, W)
-
-            # Calculate MSE loss on the differences.
-            diff_loss_fn = nn.MSELoss()
-            diff_loss = diff_loss_fn(pred_diff, label_diff)
-
-            # Combine the base loss and the weighted difference loss
-            total_loss = base_loss + lambda_diff * diff_loss
-
-        '''# --- 3. Logging ---
-        log_prefix = 'train' if self.training else 'val'
-
-        self.log(f'{log_prefix}/base_loss', base_loss,
-                 on_step=False, on_epoch=True, sync_dist=True, prog_bar=False)
-
-        if use_diff_loss and preds.shape[1] > 1:
-            self.log(f'{log_prefix}/diff_loss', diff_loss,
-                     on_step=False, on_epoch=True, sync_dist=True, prog_bar=False)
-            # Log the lambda value used, helpful for tracking experiments
-            self.log('hyperparameters/lambda_diff', lambda_diff,
-                     on_step=False, on_epoch=True, sync_dist=True)'''
- 
-        return {"loss": total_loss}
+        else: # just do the one
+            total_loss = self.compute_loss(preds, labels, choice=self.loss_func)
+        
+            return {"loss": total_loss}
     
     def configure_optimizers(self):
         """
@@ -454,17 +470,22 @@ class NewWaveTransformer(pl.LightningModule):
         samples, labels = batch # samples shape (B, T_in, C, H, W), labels shape (B, T_out, C, H, W)
         preds = self.forward(samples, labels) # preds shape (B, T_out, C, H, W)
         loss_dict = self.objective(preds, labels)
-        loss = loss_dict['loss']
 
-        return loss, preds
+        return loss_dict, preds
         
     def training_step(self, batch, batch_idx):
         """
         training
         """
-        loss, preds = self.shared_step(batch, batch_idx)
+        loss_dict, preds = self.shared_step(batch, batch_idx)
         
-        self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train_loss", loss_dict['loss'], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "multi":
+            self.log("train_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("train_gdl", loss_dict['gdl'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "kspace":
+            self.log("train_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("train_kspace", loss_dict['kspace'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
         
         # For sequential models, we need to handle multiple timesteps
         if isinstance(batch, list):
@@ -515,15 +536,21 @@ class NewWaveTransformer(pl.LightningModule):
         self.log("train_psnr", psnr, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train_ssim", ssim, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         
-        return {'loss': loss, 'output': preds, 'target': batch}
+        return {'loss': loss_dict['loss'], 'output': preds, 'target': batch}
     
     def validation_step(self, batch, batch_idx):
         """
         validation
         """
-        loss, preds = self.shared_step(batch, batch_idx)
+        loss_dict, preds = self.shared_step(batch, batch_idx)
         
-        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val_loss", loss_dict['loss'], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "multi":
+            self.log("val_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("val_gdl", loss_dict['gdl'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "kspace":
+            self.log("val_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("val_kspace", loss_dict['kspace'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
         
         # For sequential models, we need to handle multiple timesteps
         if isinstance(batch, list):
@@ -574,17 +601,17 @@ class NewWaveTransformer(pl.LightningModule):
         self.log("val_psnr", psnr, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val_ssim", ssim, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         
-        return {'loss': loss, 'output': preds, 'target': batch}
+        return {'loss': loss_dict['loss'], 'output': preds, 'target': batch}
     
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         """
         Good ol testing step
         """
-        loss, preds = self.shared_step(batch, batch_idx)
+        loss_dict, preds = self.shared_step(batch, batch_idx)
         samples, labels = batch
         
         # log the loss for this batch
-        self.log("test_loss_step", loss, on_step=True, on_epoch=False, prog_bar=True)
+        self.log("test_loss_step", loss_dict['loss'], on_step=True, on_epoch=False, prog_bar=False)
         
         # keep preds and labels for aggregation
         output = {"preds": preds.detach().cpu().numpy(), "labels": labels.detach().cpu().numpy()}

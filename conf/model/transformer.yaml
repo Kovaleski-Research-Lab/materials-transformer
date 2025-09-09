@@ -16,11 +16,16 @@ embed_dim: 384
 depth: 4
 num_heads: 8
 mlp_ratio: 4.0
-use_diff_loss: False
 mixing: 'default'
 num_blocks: 16
-lambda_diff: 0.1
 dropout: 0.0
+
+mcl_params:
+  alpha: 0.5 # kMag
+  beta: 0.5 # kPhase
+  gamma: 0.5 # kRadial
+  delta: 0.5 # kAngular
+  diff: 0.0 # for gradient difference loss
 
 # General Parameters
 
@@ -39,4 +44,4 @@ lr_scheduler:
 
 near_field_dim: ${data.near_field_dim}
 seq_len: ${data.seq_len}
-loss_func: 'mse'
+loss_func: 'kspace'
