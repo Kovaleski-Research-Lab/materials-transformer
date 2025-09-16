@@ -19,6 +19,11 @@ mlp_ratio: 4.0
 mixing: 'default'
 num_blocks: 16
 dropout: 0.0
+mcl_params:
+  alpha: 0.8
+  beta: 0.5
+  gamma: 0.5
+  delta: 0.5
 
 mcl_params:
   alpha: 0.5 # kMag
@@ -44,4 +49,5 @@ lr_scheduler:
 
 near_field_dim: ${data.near_field_dim}
 seq_len: ${data.seq_len}
-loss_func: 'kspace'
+loss_func: 'mse-ssim'
+sample_idx: 10

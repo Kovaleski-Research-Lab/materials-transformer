@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from utils.eval import create_dft_plot_artifact, create_correlation_plot_artifact, create_flipbook_artifact
 from utils.fourier import FNetEncoderLayer, FNOTransformerLayer
 from utils.custom_loss import K_losses
+from utils.custom_loss import K_losses
 
 # helper function(s)
 def get_padding_2d(input_shape, patch_size):
@@ -36,12 +37,14 @@ class NewWaveTransformer(pl.LightningModule):
         num_blocks: int,
         dropout: float,
         mcl_params: dict,
+        mcl_params: dict,
         # relevant hyperparameters 
         optimizer: Any,
         lr_scheduler: Any,
         near_field_dim: int,
         loss_func: str,
-        seq_len: int
+        seq_len: int,
+        sample_idx: int
     ):  
         self.patch_size = patch_size
         self.embed_dim = embed_dim
@@ -52,11 +55,13 @@ class NewWaveTransformer(pl.LightningModule):
         self.num_blocks = num_blocks
         self.dropout = dropout
         self.mcl_params = mcl_params
+        self.mcl_params = mcl_params
         self.optimizer_cfg = optimizer
         self.scheduler_cfg = lr_scheduler
         self.near_field_dim = near_field_dim
         self.loss_func = loss_func
         self.seq_len = seq_len
+        self.sample_idx = sample_idx
         
         self.t_in_for_pos_embed = 1 # num of input steps pos embed should handle
         self.max_steps = self.t_in_for_pos_embed + self.seq_len
@@ -420,6 +425,28 @@ class NewWaveTransformer(pl.LightningModule):
             loss = (self.mcl_params['alpha'] * kMag + self.mcl_params['beta'] * kPhase +
                             self.mcl_params['gamma'] * kRadial + self.mcl_params['delta'] * kAngular)
 
+        elif choice == 'ssim': # standard (full volume)
+            preds_reshaped = preds.view(B*T, C, H, W)
+            labels_reshaped = labels.view(B*T, C, H, W)
+            
+            # Compute SSIM for each channel separately
+            torch.use_deterministic_algorithms(True, warn_only=True)
+            with torch.backends.cudnn.flags(enabled=False):
+                ssim_vals = []
+                for c in range(C):
+                    pred_c = preds_reshaped[:, c:c+1]  # Keep channel dimension
+                    label_c = labels_reshaped[:, c:c+1]
+                    fn = StructuralSimilarityIndexMeasure(data_range=1.0).to(self.device)
+                    ssim_value = fn(pred_c, label_c)
+                    ssim_vals.append(ssim_value)
+                
+            # Average SSIM across channels
+            ssim_comp = 1 - torch.stack(ssim_vals).mean()
+            
+            # Add MSE component
+            mse_comp = torch.nn.MSELoss()(preds, labels)
+            loss = ssim_comp
+        
         else:
             raise ValueError(f"Unsupported loss function: {choice}")
             
@@ -436,6 +463,13 @@ class NewWaveTransformer(pl.LightningModule):
             total_loss = mse_loss + self.mcl_params['alpha'] * gdl_loss
             
             return {"loss": total_loss, "mse": mse_loss, "gdl": gdl_loss}
+        
+        if self.loss_func == "mse-ssim":
+            mse_loss = self.compute_loss(preds, labels, choice='mse')
+            ssim_loss = self.compute_loss(preds, labels, choice='ssim')
+            total_loss = mse_loss + self.mcl_params['alpha'] * ssim_loss
+            
+            return {"loss": total_loss, "mse": mse_loss, "ssim": ssim_loss}  
         
         if self.loss_func == "kspace":
             mse_loss = self.compute_loss(preds, labels, choice='mse')
@@ -472,13 +506,22 @@ class NewWaveTransformer(pl.LightningModule):
         loss_dict = self.objective(preds, labels)
 
         return loss_dict, preds
+        return loss_dict, preds
         
     def training_step(self, batch, batch_idx):
         """
         training
         """
         loss_dict, preds = self.shared_step(batch, batch_idx)
+        loss_dict, preds = self.shared_step(batch, batch_idx)
         
+        self.log("train_loss", loss_dict['loss'], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "multi":
+            self.log("train_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("train_gdl", loss_dict['gdl'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "kspace":
+            self.log("train_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("train_kspace", loss_dict['kspace'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train_loss", loss_dict['loss'], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         if self.loss_func == "multi":
             self.log("train_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
@@ -537,13 +580,22 @@ class NewWaveTransformer(pl.LightningModule):
         self.log("train_ssim", ssim, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         
         return {'loss': loss_dict['loss'], 'output': preds, 'target': batch}
+        return {'loss': loss_dict['loss'], 'output': preds, 'target': batch}
     
     def validation_step(self, batch, batch_idx):
         """
         validation
         """
         loss_dict, preds = self.shared_step(batch, batch_idx)
+        loss_dict, preds = self.shared_step(batch, batch_idx)
         
+        self.log("val_loss", loss_dict['loss'], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "multi":
+            self.log("val_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("val_gdl", loss_dict['gdl'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        if self.loss_func == "kspace":
+            self.log("val_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+            self.log("val_kspace", loss_dict['kspace'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val_loss", loss_dict['loss'], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         if self.loss_func == "multi":
             self.log("val_mse", loss_dict['mse'], prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
@@ -602,15 +654,18 @@ class NewWaveTransformer(pl.LightningModule):
         self.log("val_ssim", ssim, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         
         return {'loss': loss_dict['loss'], 'output': preds, 'target': batch}
+        return {'loss': loss_dict['loss'], 'output': preds, 'target': batch}
     
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         """
         Good ol testing step
         """
         loss_dict, preds = self.shared_step(batch, batch_idx)
+        loss_dict, preds = self.shared_step(batch, batch_idx)
         samples, labels = batch
         
         # log the loss for this batch
+        self.log("test_loss_step", loss_dict['loss'], on_step=True, on_epoch=False, prog_bar=False)
         self.log("test_loss_step", loss_dict['loss'], on_step=True, on_epoch=False, prog_bar=False)
         
         # keep preds and labels for aggregation
@@ -690,11 +745,12 @@ class NewWaveTransformer(pl.LightningModule):
             run_id = self.logger.run_id
             
             plot_results_dict = {"target": all_labels, "predictions": all_preds}
-            create_dft_plot_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=0)
+            create_dft_plot_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=self.sample_idx)
             create_correlation_plot_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir)
-            create_flipbook_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=0)
+            create_flipbook_artifact(eval_df=plot_results_dict, artifacts_dir=temp_dir, sample_idx=self.sample_idx)
             
             mlflow_client.log_artifacts(run_id, temp_dir, artifact_path="evaluation_plots")
+            print("--- Artifacts logged successfully to the corresponding run folder. ---")
             print("--- Artifacts logged successfully to the corresponding run folder. ---")
 
         finally:

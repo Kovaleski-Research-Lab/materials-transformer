@@ -1,6 +1,8 @@
 defaults:
   - model: transformer
   - data: fields
+  - model: transformer
+  - data: fields
   - trainer: default
   - _self_
 
@@ -10,8 +12,8 @@ hydra:
 
 # --- Global Project Configuration ---
 project_name: "fields-transformer"
-mode: train
-mlflow_run_id: null
+mode: resume
+mlflow_run_id: 8b208eeae0d1427b9b4ae2d7461b9d39
 version: "1.0.0"
 matmul_precision: "medium"
 
@@ -23,4 +25,4 @@ paths:
   results: "${paths.project_root}/results/transformer"
   nf_data: "${paths.project_root}/data/dataset_155.pt"
   ir_data: "${paths.project_root}/data/IR_v09_df_all_features.parquet"
-  ckpt: null #"${paths.results}/mlruns/168466128006132285/93ef1d69016445afbb2bb3d813f38787/artifacts/checkpoints/best-model.ckpt"
+  ckpt: "${paths.results}/mlruns/713624924803142620/8b208eeae0d1427b9b4ae2d7461b9d39/artifacts/checkpoints/best-model.ckpt"
