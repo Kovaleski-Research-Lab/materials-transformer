@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 from utils.eval import create_dft_plot_artifact, create_correlation_plot_artifact, create_flipbook_artifact
 from utils.fourier import FNetEncoderLayer, FNOTransformerLayer
 from utils.custom_loss import K_losses
-from utils.custom_loss import K_losses
 
 # helper function(s)
 def get_padding_2d(input_shape, patch_size):
@@ -36,7 +35,6 @@ class NewWaveTransformer(pl.LightningModule):
         mixing: str,
         num_blocks: int,
         dropout: float,
-        mcl_params: dict,
         mcl_params: dict,
         # relevant hyperparameters 
         optimizer: Any,
