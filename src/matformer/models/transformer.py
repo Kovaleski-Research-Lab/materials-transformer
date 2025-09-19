@@ -504,7 +504,6 @@ class NewWaveTransformer(pl.LightningModule):
         loss_dict = self.objective(preds, labels)
 
         return loss_dict, preds
-        return loss_dict, preds
         
     def training_step(self, batch, batch_idx):
         """

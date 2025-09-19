@@ -25,6 +25,13 @@ mcl_params:
   gamma: 0.5
   delta: 0.5
 
+mcl_params:
+  alpha: 0.5 # kMag
+  beta: 0.5 # kPhase
+  gamma: 0.5 # kRadial
+  delta: 0.5 # kAngular
+  diff: 0.0 # for gradient difference loss
+
 # General Parameters
 
 optimizer:

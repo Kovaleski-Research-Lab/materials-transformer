@@ -1,0 +1,4 @@
+_target_: data_modules.modes.ModeMLPDataModule
+
+data_path: ${paths.nf_modes}
+basis_path: ${paths.nf_basis}

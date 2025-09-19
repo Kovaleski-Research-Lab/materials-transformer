@@ -10,12 +10,9 @@ decoder_depth: 4
 rows: 80
 cols: 160
 dropout: 0.05
-target_vocab_size: 36 # 36 for sim data for now # 26 # 23 unique chars in the dataset + 3 specials
-mcl_params: # weighting params for loss terms
-  alpha: 1.0 # cross entropy
-  beta: 0.0 # molecular weight
-  gamma: 0.0 # rl
-  delta: 0.0 # stoichiometry
+target_vocab_size: 26 # 23 unique chars in the dataset + 3 specials
+lambda_aux: 0.0 # controlling controbution of mol weight loss term
+lambda_rl: 0.0
 
 # General Parameters
 
@@ -29,11 +26,11 @@ optimizer:
 lr_scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
   _partial_: True
-  T_0: 10
-  T_mult: 1
-  eta_min: 1.e-6
+  T_0: 100
+  T_mult: 2
+  eta_min: 1.e-5
 
-loss_func: 'ce' # or 'rl' or 'mol' or **'multi'**
+loss_func: 'bce' # or 'rl' or 'aux'
 testing_method: 'beam' # or 'deterministic' or 'sampling'
 testing_sample_num: 10 # doubles as beam width param for beam search
-seq_len: 400
+seq_len: 500

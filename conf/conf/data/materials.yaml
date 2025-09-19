@@ -1,9 +1,8 @@
 _target_: data_modules.smiles_dm.SmilesDataModule
 
-batch_size: 2048 #16
+batch_size: 16
 n_cpus: 5
 data_path: ${paths.ir_data}
 val_split: 0.2
 smiles_column: 'smiles'
-ir_column: 'y'
 max_smiles_len: 83 # longest confirmed to be 82

@@ -20,6 +20,7 @@ class SmilesDataModule(LightningDataModule):
         n_cpus: int,
         data_path: str,
         smiles_column: str,
+        ir_column: str,
         max_smiles_len: int, # for padding
         val_split: float = 0.2
     ):
@@ -28,6 +29,7 @@ class SmilesDataModule(LightningDataModule):
         self.data_path = data_path
         self.val_split = val_split
         self.smiles_column = smiles_column
+        self.ir_column = ir_column
         self.max_smiles_len = max_smiles_len
         
         # placeholders
@@ -53,7 +55,7 @@ class SmilesDataModule(LightningDataModule):
         self.tokenizer = SMILESTokenizer.from_smiles_list(all_smiles)
         
         # process IR spectra
-        X = np.log(np.vstack(df['y'].values) + 1)
+        X = np.log(np.vstack(df[self.ir_column].values) + 1)
         X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(-1)
         
         # tokenize and pad smiles strings

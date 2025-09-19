@@ -2,14 +2,14 @@ _target_: pytorch_lightning.Trainer
 
 accelerator: auto
 devices: auto
-max_epochs: 30
-precision: "16-mixed" # "32"
+max_epochs: 50
+precision: "32" #"16-mixed"
 log_every_n_steps: 1
 
 logger:
   _target_: pytorch_lightning.loggers.MLFlowLogger
   experiment_name: ${project_name}
-  run_name: run-baseline-sim-only
+  run_name: cpt-baseline-mse-ssim
   tracking_uri: "file://${paths.results}/mlruns"
   log_model: False # ModelCheckpoint callback handles this
 
@@ -29,11 +29,12 @@ callbacks:
   - _target_: pytorch_lightning.callbacks.EarlyStopping
     monitor: "val_loss"
     mode: "min"
-    patience: 5
+    patience: 15
 
   # 3. Learning Rate Monitoring
   - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     logging_interval: "step"
 
   # 4. (Custom) Smiles Pred Logger
-  - _target_: utils.callbacks.SMILES_Prediction_Logger
+  #- _target_: utils.callbacks.SMILES_Prediction_Logger
+  #- _target_: utils.callbacks.SMILES_Prediction_Logger

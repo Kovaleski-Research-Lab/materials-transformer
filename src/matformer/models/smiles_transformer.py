@@ -58,8 +58,7 @@ class SmilesTransformer(pl.LightningModule):
         encoder_depth: int,
         decoder_depth: int,
         target_vocab_size: int,
-        lambda_aux: float,
-        lambda_rl: float,
+        mcl_params: dict,
         testing_method: str,
         testing_sample_num: int
     ):
@@ -76,8 +75,7 @@ class SmilesTransformer(pl.LightningModule):
         self.encoder_depth = encoder_depth
         self.decoder_depth = decoder_depth
         self.target_vocab_size = target_vocab_size
-        self.lambda_aux = lambda_aux
-        self.lambda_rl = lambda_rl
+        self.mcl_params = mcl_params
         self.testing_method = testing_method
         self.testing_sample_num = testing_sample_num
         
@@ -165,29 +163,22 @@ class SmilesTransformer(pl.LightningModule):
             #print(f"smiles and its mw: {smiles} : {mw}")
             mw_list.append(mw)
         return torch.tensor(mw_list, device=smiles_batch.device)
+    
+    def compute_loss(self, spectrum, labels, logits, hidden_states, choice='ce'):
+        if choice == 'ce': # cross-entropy (standard loss)
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.shape[-1]),
+                labels[:, 1:].reshape(-1), # target is the seq minus <SOS>
+                ignore_index = self.trainer.datamodule.tokenizer.pad_idx)
             
-    def shared_step(self, batch, batch_idx):
-        spectrum, smiles_true = batch
+        elif choice == 'mol': # molecular weight loss
+            sos_hidden_state = hidden_states[:, 0, :]
+            pred = self.mw_predictor(sos_hidden_state).squeeze()
+            true = self.calculate_mw_for_batch(labels)
+            loss = F.mse_loss(pred, true)
         
-        # input to decoder is the sequence minus <EOS>
-        smiles_input = smiles_true[:, :-1]
-        
-        # target for loss is the seq minus <SOS>
-        smiles_target = smiles_true[:, 1:]
-        
-        # get output
-        logits, hidden_states = self.forward(spectrum, smiles_input)
-
-        # calculate primary loss
-        loss_ce = F.cross_entropy(
-            logits.reshape(-1, logits.shape[-1]),
-            smiles_target.reshape(-1),
-            ignore_index = self.trainer.datamodule.tokenizer.pad_idx
-        )
-        
-        # calculate RL loss
-        if self.loss_func == 'rl':
-            sampled_tokens, sum_log_probs = self.get_smiles_preds(spectrum, method="sampling")
+        elif choice == 'rl': # reinforcement learning
+            sampled_tokens, sum_log_probs = self.get_smiles_preds(spectrum, method='sampling')
             sampled_smiles_list = []
             for smiles_sequence in sampled_tokens:
                 smiles = self.trainer.datamodule.tokenizer.decode(smiles_sequence, skip_special_tokens=True)
@@ -210,37 +201,71 @@ class SmilesTransformer(pl.LightningModule):
             
             # calculate the RL loss (policy gradient)
             # want to MAXIMIZE reward, so MINIMIZE the negative of this value
-            loss_rl = -torch.mean(adjusted_rewards * sum_log_probs)
-            # combine
-            total_loss = loss_ce + (self.lambda_rl * loss_rl)
+            loss = -torch.mean(adjusted_rewards * sum_log_probs)
         
-        # calculate auxiliary loss
-        if self.loss_func == 'aux':
-            sos_hidden_state = hidden_states[:, 0, :]
-            pred_mw = self.mw_predictor(sos_hidden_state).squeeze()
-            true_mw = self.calculate_mw_for_batch(smiles_true)
-            loss_mw = F.mse_loss(pred_mw, true_mw)
-            self.log("mw_loss", loss_mw, prog_bar=True, on_step=False, on_epoch=True)
-            total_loss = loss_ce + (self.lambda_aux * loss_mw)
-            
+        #elif choice == 'sto': # stoichiometry stringency
+        #    pass
+        
         else:
-            total_loss = loss_ce
+            raise ValueError(f"Unsupported loss function: {choice}")
+        
+        return loss
+    
+    def objective(self, spectrum, labels, logits, hidden_states):
+        if self.loss_func == 'multi': # multi-criteria loss
+            loss_ce = self.compute_loss(spectrum, labels, logits, hidden_states)
+            loss_mol = self.compute_loss(spectrum, labels, logits, hidden_states, choice="mol")
+            loss_rl = self.compute_loss(spectrum, labels, logits, hidden_states, choice='rl')
+            loss = self.mcl_params['alpha'] * loss_ce + \
+                   self.mcl_params['beta'] * loss_mol + \
+                   self.mcl_params['gamma'] * loss_rl # + \
+                   #self.mcl_params['delta'] * loss_sto
+            return {'loss': loss, 'loss_ce': loss_ce, 'loss_mol': loss_mol, 'loss_rl': loss_rl} #, 'loss_sto': loss_sto}
+        else: # only concerned with one specified component
+            loss = self.compute_loss(spectrum, labels, logits, hidden_states, choice=self.loss_func)
+            return {'loss': loss}
             
-        return total_loss
+    def shared_step(self, batch, batch_idx):
+        spectrum, smiles_true = batch
+        
+        # input to decoder is the sequence minus <EOS>
+        smiles_input = smiles_true[:, :-1]
+        
+        # get output
+        logits, hidden_states = self.forward(spectrum, smiles_input)
+
+        # calculate loss
+        loss_dict = self.objective(spectrum, smiles_true, logits, hidden_states)
+            
+        return loss_dict
     
     def training_step(self, batch, batch_idx):
-        loss = self.shared_step(batch, batch_idx)
+        loss_dict = self.shared_step(batch, batch_idx)
         # Log the metrics
-        self.log("train_loss", loss,
+        self.log('train_loss', loss_dict['loss'],
                     prog_bar=True, on_step=False, on_epoch=True)
-        return loss
+        if self.loss_func == 'multi': # log additional components
+            self.log('train_loss_mol', loss_dict['loss_mol'],
+                        prog_bar=False, on_step=False, on_epoch=True)
+            self.log('train_loss_rl', loss_dict['loss_rl'],
+                        prog_bar=False, on_step=False, on_epoch=True)
+            #self.log('train_loss_sto', loss_dict['loss_sto'],
+            #            prog_bar=True, on_step=False, on_epoch=True)
+        return loss_dict['loss']
 
     def validation_step(self, batch, batch_idx):
-        loss = self.shared_step(batch, batch_idx)
+        loss_dict = self.shared_step(batch, batch_idx)
         # Log the metrics
-        self.log("val_loss", loss, 
+        self.log('val_loss', loss_dict['loss'],
                     prog_bar=True, on_step=False, on_epoch=True)
-        return loss
+        if self.loss_func == 'multi': # log additional components
+            self.log('val_loss_mol', loss_dict['loss_mol'],
+                        prog_bar=False, on_step=False, on_epoch=True)
+            self.log('val_loss_rl', loss_dict['loss_rl'],
+                        prog_bar=False, on_step=False, on_epoch=True)
+            #self.log('val_loss_sto', loss_dict['loss_sto'],
+            #            prog_bar=True, on_step=False, on_epoch=True)
+        return loss_dict['loss']
     
     @torch.no_grad()
     def get_smiles_preds(self, spectrum, max_len=100, method="deterministic"):
@@ -420,8 +445,7 @@ class SmilesTransformer(pl.LightningModule):
         final_sequences = sequences.index_select(0, final_global_indices.view(-1))
         
         # Reshape to the desired output format
-        return final_sequences.view(batch_size, beam_width, -1)
-        
+        return final_sequences.view(batch_size, beam_width, -1)  
             
     def test_step(self, batch, batch_idx):
         spectrum, smiles_true = batch
