@@ -15,6 +15,7 @@ from hydra.utils import instantiate, get_class
 from omegaconf import DictConfig
 import torch
 import mlflow
+from mlflow import artifacts
 import os
 import pytorch_lightning as pl
 
@@ -40,6 +41,11 @@ def main(cfg: DictConfig) -> float:
     trainer = instantiate(cfg.trainer, logger=logger)
     datamodule = instantiate(cfg.data)
     
+    # manually call setup to build the tokenizer and get vocab size
+    datamodule.setup(stage='fit')
+    print(f'The vocab size from datamodule is: {datamodule.tokenizer.vocab_size}')
+    cfg.model.vocab_size = datamodule.tokenizer.vocab_size
+    
     # fetch the checkpoint
     ckpt_path_to_load = cfg.paths.ckpt
     
@@ -48,7 +54,7 @@ def main(cfg: DictConfig) -> float:
         try:
             artifact_path = "checkpoints/best-model.ckpt"
             
-            ckpt_path_to_load = mlflow.artifacts.download_artifacts(
+            ckpt_path_to_load = artifacts.download_artifacts(
                 run_id=cfg.mlflow_run_id,
                 artifact_path=artifact_path,
                 tracking_uri=f"{cfg.paths.results}/mlruns"

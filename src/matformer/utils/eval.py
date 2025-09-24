@@ -8,6 +8,7 @@ import pandas as pd
 import os
 from rdkit import Chem
 from rdkit.Chem import Draw
+from rdkit.Chem import rdRascalMCES
 
 import utils.mapping as mapping
 
@@ -356,13 +357,20 @@ def create_molecules_artifact(
         axes[i, 0].set_title(f"True Molecule {i+1}\nSMILES: {true_smiles_list[i]}")
         
         # prediction
-        mol = Chem.MolFromSmiles(pred_smiles_list[i])
-        if not mol:
+        mol_pred = Chem.MolFromSmiles(pred_smiles_list[i])
+        if not mol_pred:
             continue
-        mol_img = Draw.MolToImage(mol, size=(300,300))
+        # determine the tanimoto similarity between the two mols
+        similarity = 0.0
+        opts = rdRascalMCES.RascalOptions()
+        opts.similarityThreshold = 0.0
+        sim_results = rdRascalMCES.FindMCES(mol, mol_pred, opts)
+        if len(sim_results) > 0:
+            similarity = sim_results[0].similarity
+        mol_img = Draw.MolToImage(mol_pred, size=(300,300))
         axes[i, 1].imshow(mol_img)
         axes[i, 1].axis('off')
-        axes[i, 1].set_title(f"Predicted Molecule {i+1}\nSMILES: {pred_smiles_list[i]}")
+        axes[i, 1].set_title(f"Predicted Molecule {i+1}\nSMILES: {pred_smiles_list[i]}\nTanimoto/Johnson Similarity: {similarity:.3f}")
         
     plt.tight_layout()
 
@@ -373,3 +381,12 @@ def create_molecules_artifact(
     print(f"Saved correlation plot artifact to {plot_path}")
     
     return None
+
+def create_func_groups_artifact(
+    eval_df: pd.DataFrame,
+    artifacts_dir: str
+) -> None:
+    true_smiles_list = eval_df['target']
+    pred_smiles_list = eval_df['predictions']
+    
+    

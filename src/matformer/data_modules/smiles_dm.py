@@ -6,12 +6,11 @@ import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import TensorDataset, DataLoader, random_split
 import pandas as pd
+from deepchem.feat.smiles_tokenizer import SmilesTokenizer
 
 # ----------------------
 # DATAMODULE and DATASET
 # ----------------------
-
-ATOM_MAP = {'C': 0, 'H': 1, 'O': 2, 'N': 3, 'S': 4, 'Cl': 5, 'PAD': 6}
 
 class SmilesDataModule(LightningDataModule):
     def __init__(
@@ -19,18 +18,22 @@ class SmilesDataModule(LightningDataModule):
         batch_size: int,
         n_cpus: int,
         data_path: str,
+        vocab_path: str,
         smiles_column: str,
         ir_column: str,
         max_smiles_len: int, # for padding
-        val_split: float = 0.2
+        ir_seq_len: int,
+        val_split: float = 0.2,
     ):
         self.batch_size = batch_size
         self.n_cpus = n_cpus
         self.data_path = data_path
+        self.vocab_path = vocab_path
         self.val_split = val_split
         self.smiles_column = smiles_column
         self.ir_column = ir_column
         self.max_smiles_len = max_smiles_len
+        self.ir_seq_len = ir_seq_len
         
         # placeholders
         self.char_to_idx = None
@@ -49,14 +52,17 @@ class SmilesDataModule(LightningDataModule):
     def setup(self, stage):
         # read in the parquet file
         df = pd.read_parquet(self.data_path)
+        df = df.sample(frac=0.025)
 
         # create and store the tokenizer
         all_smiles = df[self.smiles_column].tolist()
-        self.tokenizer = SMILESTokenizer.from_smiles_list(all_smiles)
+        #self.tokenizer = CustomSmilesTokenizer.from_smiles_list(all_smiles)
+        self.tokenizer = SmilesTokenizer(self.vocab_path)
         
         # process IR spectra
-        X = np.log(np.vstack(df[self.ir_column].values) + 1)
-        X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(-1)
+        X_tensor = self.process_spectrum(df[self.ir_column])
+        #X = np.log(np.vstack(df[self.ir_column].values) + 1)
+        #X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(-1)
         
         # tokenize and pad smiles strings
         tokenized_smiles = []
@@ -65,7 +71,7 @@ class SmilesDataModule(LightningDataModule):
             
             # pad to max length
             padding_needed = self.max_smiles_len - len(tokenized)
-            padded_tokens = tokenized + [self.tokenizer.pad_idx] * padding_needed
+            padded_tokens = tokenized + [self.tokenizer.pad_token_id] * padding_needed
             tokenized_smiles.append(padded_tokens[:self.max_smiles_len])
             
         y_tensor = torch.tensor(tokenized_smiles, dtype=torch.long)
@@ -109,11 +115,53 @@ class SmilesDataModule(LightningDataModule):
             persistent_workers=True
         )
         
+    # HELPER FUNCTIONS
+    
+    def process_spectrum(self, spectra):
+        """Discretizes a spectrum to a target length and normalizes it to 0-99 integers.
+
+        Args:
+            spectra (pd.Series): A pandas Series where each element 
+                is a list or NumPy array of intensity values.
+
+        Returns:
+            torch.Tensor: The processed spectrum as a tensor of shape (seq_len, 1).
+        """
+        # 1. Format the data
+        raw_spectra_arr = np.vstack(spectra.values)
+        num_samples, og_length = raw_spectra_arr.shape
+        
+        # 2. Define the OG and new index axes for interpolation
+        og_indices = np.arange(og_length)
+        new_indices = np.linspace(0, og_length-1, self.ir_seq_len)
+        
+        # 3. apply interpolation along each row
+        interp_spectra = np.apply_along_axis(
+            lambda row: np.interp(new_indices, og_indices, row),
+            axis=1,
+            arr=raw_spectra_arr
+        )
+        
+        # 4. perform vectorized min-max normalization
+        min_vals = interp_spectra.min(axis=1, keepdims=True)
+        max_vals = interp_spectra.max(axis=1, keepdims=True)
+        data_range = max_vals - min_vals
+        safe_range = np.where(data_range == 0, 1, data_range) # mask for flat spectra
+        norm_spectra = ((interp_spectra - min_vals) / safe_range) * 99
+        norm_spectra[data_range.flatten() == 0] = 0
+        
+        # 5. convert to integers then tensor and reshape
+        final_arr = norm_spectra.astype(int)
+        final_tensor = torch.tensor(final_arr, dtype=torch.float32).unsqueeze(-1)
+        
+        return final_tensor
+    
 # ----------------------
 # TOKENIZER
 # ----------------------
 
-class SMILESTokenizer:
+class CustomSmilesTokenizer:
+    """Character-level tokenizer for SMILES strings"""
     def __init__(self, char_to_idx, idx_to_char):
         self.char_to_idx = char_to_idx
         self.idx_to_char = idx_to_char

@@ -54,13 +54,12 @@ class SmilesTransformer(pl.LightningModule):
         optimizer: Any,
         lr_scheduler: Any,
         loss_func: str,
-        seq_len: int,
         encoder_depth: int,
         decoder_depth: int,
-        target_vocab_size: int,
         mcl_params: dict,
         testing_method: str,
-        testing_sample_num: int
+        testing_sample_num: int,
+        vocab_size: int
     ):
         self.input_dim = input_dim
         self.model_dim = model_dim
@@ -71,13 +70,12 @@ class SmilesTransformer(pl.LightningModule):
         self.optimizer_cfg = optimizer
         self.scheduler_cfg = lr_scheduler
         self.loss_func = loss_func
-        self.seq_len = seq_len # IR spectrum length
         self.encoder_depth = encoder_depth
         self.decoder_depth = decoder_depth
-        self.target_vocab_size = target_vocab_size
         self.mcl_params = mcl_params
         self.testing_method = testing_method
         self.testing_sample_num = testing_sample_num
+        self.vocab_size = vocab_size
         
         super().__init__()
         self.save_hyperparameters()
@@ -92,7 +90,7 @@ class SmilesTransformer(pl.LightningModule):
         
         # ===== 2. DECODER =====
         # embedding for the SMILES character tokens
-        self.smiles_embedding = nn.Embedding(target_vocab_size, model_dim)
+        self.smiles_embedding = nn.Embedding(vocab_size, model_dim)
         # the decoder
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=model_dim, nhead=num_heads, batch_first=True
@@ -100,7 +98,7 @@ class SmilesTransformer(pl.LightningModule):
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=self.decoder_depth)
         
         # ===== 3. FINAL OUTPUT LAYER =====
-        self.output_fc = nn.Linear(model_dim, target_vocab_size)
+        self.output_fc = nn.Linear(model_dim, vocab_size)
         
         # ===== 4. component for Mol Weight =====
         self.mw_predictor = nn.Sequential(
@@ -159,7 +157,7 @@ class SmilesTransformer(pl.LightningModule):
         mw_list = []
         for item in smiles_batch:
             smiles = self.trainer.datamodule.tokenizer.decode(item, skip_special_tokens=True)
-            mw = Descriptors.ExactMolWt(Chem.MolFromSmiles(smiles))
+            mw = Descriptors.ExactMolWt(Chem.MolFromSmiles(smiles.replace(' ', '')))
             #print(f"smiles and its mw: {smiles} : {mw}")
             mw_list.append(mw)
         return torch.tensor(mw_list, device=smiles_batch.device)
@@ -169,7 +167,7 @@ class SmilesTransformer(pl.LightningModule):
             loss = F.cross_entropy(
                 logits.reshape(-1, logits.shape[-1]),
                 labels[:, 1:].reshape(-1), # target is the seq minus <SOS>
-                ignore_index = self.trainer.datamodule.tokenizer.pad_idx)
+                ignore_index = self.trainer.datamodule.tokenizer.pad_token_id)
             
         elif choice == 'mol': # molecular weight loss
             sos_hidden_state = hidden_states[:, 0, :]
@@ -182,7 +180,7 @@ class SmilesTransformer(pl.LightningModule):
             sampled_smiles_list = []
             for smiles_sequence in sampled_tokens:
                 smiles = self.trainer.datamodule.tokenizer.decode(smiles_sequence, skip_special_tokens=True)
-                sampled_smiles_list.append(smiles)
+                sampled_smiles_list.append(smiles.replace(' ', ''))
                 
             # calculate rewards for each string in the batch
             rewards = []
@@ -301,7 +299,7 @@ class SmilesTransformer(pl.LightningModule):
         # Start with the <SOS> token for each item in batch
         output_tokens = torch.full(
             (batch_size, 1),
-            fill_value=tokenizer.sos_idx,
+            fill_value=tokenizer.cls_token_id, #tokenizer.sos_idx,
             dtype=torch.long,
             device=self.device
         )
@@ -331,7 +329,7 @@ class SmilesTransformer(pl.LightningModule):
                 output_tokens = torch.cat([output_tokens, next_tokens], dim=1)
             
             # update tracker when sequence generates <EOS>
-            has_finished = has_finished | (next_tokens == tokenizer.eos_idx)
+            has_finished = has_finished | (next_tokens == tokenizer.sep_token_id) #tokenizer.eos_idx)
 
             # Stop if we predict the <EOS> token
             if has_finished.all():
@@ -357,7 +355,7 @@ class SmilesTransformer(pl.LightningModule):
         
         sequences = torch.full(
             (batch_size, 1),
-            fill_value=tokenizer.sos_idx,
+            fill_value=tokenizer.cls_token_id, #tokenizer.sos_idx,
             dtype=torch.long,
             device=self.device
         )        
@@ -378,15 +376,15 @@ class SmilesTransformer(pl.LightningModule):
             
             # decode sequences
             logits, _ = self.decode(sequences, expanded_memory)
-            log_probs = F.log_softmax(logits[:, -1, :], dim=-1) # [num_active_beams, target_vocab_size]
+            log_probs = F.log_softmax(logits[:, -1, :], dim=-1) # [num_active_beams, vocab_size]
             
             # calculate candidate scores -> add current beam scores to the next token log probs
             # shape: [batch_size, k, vocab_size] -> [batch_size, k * vocab_size]
             if step == 0:
                 # on the first step each of the batch_size items expands to k candidates
-                candidate_scores = top_k_scores.unsqueeze(2) + log_probs.view(batch_size, 1, self.target_vocab_size)
+                candidate_scores = top_k_scores.unsqueeze(2) + log_probs.view(batch_size, 1, self.vocab_size)
             else:
-                candidate_scores = top_k_scores.unsqueeze(2) + log_probs.view(batch_size, beam_width, self.target_vocab_size)
+                candidate_scores = top_k_scores.unsqueeze(2) + log_probs.view(batch_size, beam_width, self.vocab_size)
                 
             candidate_scores = candidate_scores.view(batch_size, -1)
             
@@ -395,8 +393,8 @@ class SmilesTransformer(pl.LightningModule):
             top_k_scores, top_k_indices = torch.topk(candidate_scores, beam_width, dim=-1)
             
             # decode indices to find parent beams and new tokens
-            beam_indices = top_k_indices // self.target_vocab_size # which parent did it come from?
-            token_indices = top_k_indices % self.target_vocab_size # which new token was chosen?
+            beam_indices = top_k_indices // self.vocab_size # which parent did it come from?
+            token_indices = top_k_indices % self.vocab_size # which new token was chosen?
             
             # rebuild the beams
             if step == 0:
@@ -413,7 +411,7 @@ class SmilesTransformer(pl.LightningModule):
             ], dim=1)
             
             # update the tracker for finished beams
-            eos_generated = (token_indices == tokenizer.eos_idx)
+            eos_generated = (token_indices == tokenizer.sep_token_id) #tokenizer.eos_idx)
             if step == 0:
                 completed_beams = eos_generated
             else:
@@ -424,7 +422,7 @@ class SmilesTransformer(pl.LightningModule):
                 break
                 
         # calculate the length of each sequence
-        eos_positions = (sequences == tokenizer.eos_idx).int()
+        eos_positions = (sequences == tokenizer.sep_token_id).int()
         sequence_lengths = eos_positions.argmax(dim=1)
         sequence_lengths[sequence_lengths == 0] = max_len
         sequence_lengths = sequence_lengths.float() + 1.0 # adding 1 for the token itself
@@ -485,19 +483,19 @@ class SmilesTransformer(pl.LightningModule):
             # output['true_tokens'] is a 2D tensor of shape (batch_size, seq_len)
             for true_token_sequence in output['true_tokens']:
                 true_smiles = tokenizer.decode(true_token_sequence, skip_special_tokens=True)
-                true_smiles_list.append(true_smiles)
+                true_smiles_list.append(true_smiles.replace(' ', ''))
             
             if self.testing_method == "deterministic": # just a single one to decode per
                 for pred_token_sequence in output['pred_tokens']:
                     #print(pred_token_sequence)
                     pred_smiles = tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
-                    pred_smiles_list.append(pred_smiles)
+                    pred_smiles_list.append(pred_smiles.replace(' ', ''))
             elif self.testing_method in ["sampling", "beam"]: # we have multiple preds per
                 for pred_group in output['pred_tokens']: # [k, seq_len]
                     decoded_preds = [tokenizer.decode(pred_token_sequence, skip_special_tokens=True)
                                      for pred_token_sequence in pred_group]
                     # append list of k decoded strings to the master list
-                    pred_smiles_list.append(decoded_preds)
+                    pred_smiles_list.append([s.replace(' ', '') for s in decoded_preds])
                 
         # Free memory
         self.test_step_outputs.clear()
