@@ -11,8 +11,6 @@ from rdkit.Chem import Descriptors
 
 from utils.eval import create_molecules_artifact
 
-ATOM_MAP = {'C': 0, 'H': 1, 'O': 2, 'N': 3, 'S': 4, 'Cl': 5, 'PAD': 6}
-
 # Helper class for Positional Encoding
 class PositionalEncoding(nn.Module):
     def __init__(self, model_dim, max_len=5000, batch_first=False):

@@ -1,0 +1,46 @@
+_target_: models.transformer.F2FTransformer
+
+# Transformer Parameters
+# - patch_size: size of patches to split input into
+# - embed_dim: dimensionity in embedding space
+# - depth: total layers (e.g., 6 encoder, 6 decoder)
+# - num_heads: attention heads
+# - mlp_ratio:
+# - use_diff_loss: whether to use the difference loss term (unfinished)
+# - mixing: token mixing strategy. default or fnet or afno
+# = num_blocks: how many blocks to use for block diag weight matrices in AFNO
+# - lambda_diff: diff loss hyperparameter
+
+patch_size: 11
+embed_dim: 384
+depth: 4
+num_heads: 8
+mlp_ratio: 4.0
+mixing: 'default'
+num_blocks: 16
+dropout: 0.0
+mcl_params:
+  alpha: 1.0
+  beta: 0.0
+  gamma: 0.0
+  delta: 0.0
+
+# General Parameters
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: True
+  lr: 1.e-4
+  betas: [0.9, 0.999] # default
+  weight_decay: 0.0 # default
+
+lr_scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _partial_: True
+  T_max: 100
+  eta_min: 1.e-6
+
+near_field_dim: ${data.near_field_dim}
+seq_len: ${data.seq_len}
+loss_func: 'mse-ssim'
+sample_idx: 10

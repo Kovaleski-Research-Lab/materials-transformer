@@ -1,11 +1,11 @@
 _target_: data_modules.smiles_dm.SmilesDataModule
 
-batch_size: 16 #128 #256 #16
+batch_size: 256 #128 #256 #16
 n_cpus: 5
-data_path: ${paths.ir_data}
+data_path: ${paths.ir_sim_data}
 vocab_path: ${paths.smiles_vocab}
 val_split: 0.2
 smiles_column: 'smiles'
 ir_column: 'y'
-max_smiles_len: 83 # 42 longest confirmed to be 82
+max_smiles_len: 42 # 83 longest confirmed to be 82
 ir_seq_len: 400

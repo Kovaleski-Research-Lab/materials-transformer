@@ -7,3 +7,4 @@ seq_len: 15
 data_path: ${paths.nf_data}
 spacing_mode: 'sequential'
 io_mode: 'one_to_many'
+model_type: 'd2f'

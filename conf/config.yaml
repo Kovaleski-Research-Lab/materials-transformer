@@ -1,6 +1,6 @@
 defaults:
-  - model: materials-model
-  - data: materials
+  - model: d2f
+  - data: fields
   - trainer: default
   - _self_
 
@@ -9,7 +9,7 @@ hydra:
     dir: ${paths.results}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 # --- Global Project Configuration ---
-project_name: "smiles-transformer"
+project_name: "d2f-transformer"
 mode: train
 mlflow_run_id: null
 version: "1.0.0"
@@ -22,6 +22,7 @@ paths:
   # root output directory for all runs
   results: "${paths.project_root}/results/transformer"
   nf_data: "${paths.project_root}/data/dataset_155.pt"
-  ir_data: "${paths.project_root}/data/smiles_ir/IR_v09_df_all_features.parquet" #"${paths.project_root}/data/smiles_ir/IR_sim_data.parquet"
+  ir_exp_data: "${paths.project_root}/data/smiles_ir/IR_v09_df_all_features.parquet"
+  ir_sim_data: "${paths.project_root}/data/smiles_ir/IR_sim_data.parquet"
   smiles_vocab: "${paths.project_root}/data/smiles_ir/vocab.txt"
-  ckpt: null #"${paths.results}/mlruns/168466128006132285/304cbaa2342e4fc693ab4a183cfe6765/artifacts/checkpoints/best-model.ckpt"
+  ckpt: null #"${paths.results}/mlruns/168466128006132285/5ba73ea2848d4eb5b9e9cd29888acd60/artifacts/checkpoints/best-model.ckpt"

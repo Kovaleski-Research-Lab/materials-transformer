@@ -52,7 +52,7 @@ class SmilesDataModule(LightningDataModule):
     def setup(self, stage):
         # read in the parquet file
         df = pd.read_parquet(self.data_path)
-        df = df.sample(frac=0.025)
+        #df = df.sample(frac=0.025)
 
         # create and store the tokenizer
         all_smiles = df[self.smiles_column].tolist()

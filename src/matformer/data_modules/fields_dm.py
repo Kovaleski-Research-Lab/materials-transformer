@@ -19,7 +19,8 @@ class NFDataModule(LightningDataModule):
         seq_len: int,
         data_path: str,
         spacing_mode: str,
-        io_mode: str
+        io_mode: str,
+        model_type: str
     ):
         self.batch_size = batch_size
         self.n_cpus = n_cpus
@@ -28,11 +29,8 @@ class NFDataModule(LightningDataModule):
         self.data_path = data_path
         self.spacing_mode = spacing_mode
         self.io_mode = io_mode
+        self.model_type = model_type
         self.index_map = None
-        self.dataset = None
-        self.train = None
-        self.valid = None
-        self.test = None
         
         super().__init__()
         
@@ -42,15 +40,19 @@ class NFDataModule(LightningDataModule):
         self.index_map = self._create_index_map(raw_data)
         
         # process the data
-        self.dataset = self.preprocess_data(raw_data)
+        if self.model_type == 'f2f':
+            self.dataset = self.preprocess_data(raw_data)
+        elif self.model_type == 'd2f':
+            self.dataset = D2F_Dataset(raw_data)
+        else:
+            return ValueError(f'model_type parameter: {self.model_type} not recognized.')
         
         # init train val
         self.train = Subset(self.dataset, self.index_map['train'])
         self.valid = Subset(self.dataset, self.index_map['valid'])
         # test is valid (for now, will add functionality for tweaking this later)
         self.test = Subset(self.dataset, self.index_map['valid'])
-        
-        
+         
     def _create_index_map(self, data):
         index_map = {'train': [], 'valid': []}
         for i in range(len(data['tag'])):
@@ -80,10 +82,12 @@ class NFDataModule(LightningDataModule):
                           num_workers=self.n_cpus,
                           shuffle=False,
                           persistent_workers=True)
+                          
+    # Preprocessing step for Field 2 Field Model
     
     def preprocess_data(self, raw_data, order=(-1, 0, 1, 2)):
         """Formats the preprocessed data file into the correct setup  
-        and order for the temporal model.
+        and order for the field to field model.
 
         Args:
             order (tuple, optional): order of the sequence to be used. Defaults to (-1, 0, 1, 2).
@@ -162,22 +166,42 @@ class NFDataModule(LightningDataModule):
                 # no other spacing modes are implemented
                 raise NotImplementedError('Specified recurrent dataloading confuration is not implemented.')
             
-        return NF_Dataset(all_samples, all_labels)
+        return F2F_Dataset(all_samples, all_labels)
     
-class NF_Dataset(Dataset):
+class F2F_Dataset(Dataset):
     """
-    Dataset for the sequential transformer
+    Dataset for the field-to-field transformer
     """
     def __init__(self, samples, labels):
         self.samples = samples
         self.labels = labels
 
     def __getitem__(self, index):
-        
         return self.samples[index], self.labels[index]
 
     def __len__(self):
         return len(self.samples)
     
+class D2F_Dataset(Dataset):
+    """
+    Dataset for the design-to-field transformer
+    """
+    def __init__(self, data):
+        self.data = data
+        self.format_data() # setup data accordingly
 
-        
+    def __getitem__(self, idx):
+        near_field = self.near_fields[idx] # [2, 166, 166]
+        design = self.designs[idx].float().unsqueeze(1) # [9, 1]
+        return near_field, design
+    
+    def __len__(self):
+        return len(self.near_fields)
+    
+    def format_data(self):
+        self.designs = self.data['radii']
+        self.phases = self.data['phases']
+        self.derivatives = self.data['derivatives']
+        nf_volume = self.data['near_fields'] # [num_samples, 2, 166, 166, 63]
+        # grab the final slice
+        self.near_fields = nf_volume[:, :, :, :, -1] # [num_samples, 2, 166, 166]
